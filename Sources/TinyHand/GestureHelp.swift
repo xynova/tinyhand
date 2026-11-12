@@ -8,14 +8,13 @@ enum GestureHelp {
 
     /// The badge on a hand that has gestures: how many it has. Nil for a hand without any.
     static func badge(for style: PointerStyle) -> String? {
-        let count = style.gestures.count
+        let count = style.listedGestures.count
         return count > 0 ? "\(count)" : nil
     }
 
-    /// The hover text and accessibility description, such as
-    /// "Line art. Gestures: ⌃⇧1, ⌃⇧2, ⌃⇧3".
+    /// The hover text and accessibility description, such as "Line art. Gestures: ⌃⇧1, ⌃⇧2".
     static func summary(for style: PointerStyle) -> String {
-        let gestures = style.gestures
+        let gestures = style.listedGestures
         guard !gestures.isEmpty else {
             return style.title
         }

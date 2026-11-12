@@ -806,7 +806,7 @@ private struct GesturesCard: View {
     @ObservedObject var model: SettingsModel
 
     var body: some View {
-        let stock = PointerStyle.builtInHands.filter { !$0.gestures.isEmpty }
+        let stock = PointerStyle.builtInHands.filter { !$0.listedGestures.isEmpty }
         let custom = PointerStyle.customHands
         VStack(alignment: .leading, spacing: 6) {
             Card(title: "Gestures") {
@@ -839,11 +839,11 @@ private struct GestureHandRow: View {
                     TextButton(title: "Add gesture…") { model.chooseGestureFile(for: hand) }
                 }
             }
-            if hand.gestures.isEmpty {
+            if hand.listedGestures.isEmpty {
                 Text("No gestures yet.").font(.system(size: 11)).foregroundColor(.secondary)
             } else {
                 HStack(spacing: 8) {
-                    ForEach(hand.gestures, id: \.self) { gesture in
+                    ForEach(hand.listedGestures, id: \.self) { gesture in
                         GestureTile(gesture: gesture, removable: hand.isCustom) {
                             model.removeGesture(gesture, from: hand)
                         }

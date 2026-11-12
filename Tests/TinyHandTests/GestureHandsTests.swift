@@ -16,14 +16,15 @@ let allHandGestures: [HandGesture] = PointerStyle.builtInHands.flatMap { style i
 // HandAsset keeps a small static cache with no lock, so these cases run one at a time.
 @Suite("Gesture hands", .serialized)
 struct GestureHandsTests {
-    @Test("Line art has gestures in slots 1 to 3, one picture each")
+    @Test("Line art has gestures in slots 1, 2 and 9, and lists only 1 and 2")
     func lineArtSlots() throws {
         let line = try #require(PointerStyle(rawValue: "line"))
-        #expect(line.gestures.map(\.slot) == [1, 2, 3])
-        #expect(line.gestures.map(\.assetName) == ["hand_line_1", "hand_line_2", "hand_line_3"])
+        #expect(line.gestures.map(\.slot) == [1, 2, 9])
+        #expect(line.gestures.map(\.assetName) == ["hand_line_1", "hand_line_2", "hand_line_9"])
+        #expect(line.listedGestures.map(\.slot) == [1, 2], "⌃⇧9 works but isn't shown")
         #expect(line.gesture(slot: 2)?.label == "Gesture 2")
         #expect(line.gesture(slot: 2)?.shortcut == "⌃⇧2")
-        #expect(line.gesture(slot: 4) == nil)
+        #expect(line.gesture(slot: 3) == nil)
     }
 
     @Test("Every gesture picture loads, and its stick sits where the pointing picture's stick does",
@@ -78,7 +79,8 @@ struct GestureHandsTests {
         _ = NSApplication.shared
         let view = ArmView(frame: NSRect(x: 0, y: 0, width: 420, height: 560))
         let line = try #require(PointerStyle(rawValue: "line"))
-        let ok = try #require(line.gesture(slot: 3))
+        // The unlisted ⌃⇧9 shows like any other gesture.
+        let ok = try #require(line.gesture(slot: 9))
 
         view.setStyle(line)
         view.setGesture(ok)
@@ -97,7 +99,7 @@ struct GestureHandsTests {
     func customHandGesture() throws {
         try TestPictures.withHandsFolder { folder in
             // Source pictures the way a person would bring them: the hand alone, no stick, on transparency.
-            let gestureSource = try TestPictures.handOnly("hand_line_2", to: folder.appendingPathComponent("Surfer.png"))
+            let gestureSource = try TestPictures.handOnly("hand_line_1", to: folder.appendingPathComponent("Surfer.png"))
             let hand = try TestPictures.makeHand(in: folder)
             defer { CustomHands.remove(hand) }
             #expect(hand.gestures.isEmpty)

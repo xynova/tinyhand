@@ -48,6 +48,7 @@ final class Toolbar {
     private let trayStack = NSStackView()
     private var hint: Panel?
     private var preview: Panel?
+    private var previewedSlots: [Int] = []
 
     var frame: CGRect { inkOpen ? panel.frame.union(tray.frame) : panel.frame }
 
@@ -399,7 +400,7 @@ final class Toolbar {
 
     private func showGesturePreview(_ style: PointerStyle, over button: NSView) {
         hideGesturePreview()
-        let gestures = style.gestures
+        let gestures = style.listedGestures
         guard !gestures.isEmpty else {
             return
         }
@@ -454,11 +455,13 @@ final class Toolbar {
         p.setFrameOrigin(CGPoint(x: x, y: panel.frame.maxY + 10))
         p.orderFrontRegardless()
         preview = p
+        previewedSlots = gestures.map(\.slot)
     }
 
     func hideGesturePreview() {
         preview?.orderOut(nil)
         preview = nil
+        previewedSlots = []
     }
 
     /// The small count badge on a hand that has gestures.
@@ -652,6 +655,9 @@ final class Toolbar {
 // without a person hovering or clicking.
 extension Toolbar {
     var isPreviewingGestures: Bool { preview != nil }
+
+    /// The slots of the gestures the preview shows.
+    var gesturesInPreview: [Int] { previewedSlots }
 
     func snapshotGesturePreview() -> NSBitmapImageRep? {
         Toolbar.snapshot(of: preview?.contentView)

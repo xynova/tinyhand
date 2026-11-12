@@ -14,14 +14,14 @@ struct GestureHelpTests {
 
     @Test("The badge shows how many gestures a hand has, and only on hands that have some")
     func badge() throws {
-        #expect(GestureHelp.badge(for: try line) == "3")
+        #expect(GestureHelp.badge(for: try line) == "2", "the unlisted ⌃⇧9 isn't counted")
         #expect(GestureHelp.badge(for: .lavender) == nil)
         #expect(GestureHelp.badge(for: .laser) == nil)
     }
 
     @Test("The hover text lists each gesture's shortcut")
     func summary() throws {
-        #expect(GestureHelp.summary(for: try line) == "Line art. Gestures: ⌃⇧1, ⌃⇧2, ⌃⇧3")
+        #expect(GestureHelp.summary(for: try line) == "Line art. Gestures: ⌃⇧1, ⌃⇧2", "the unlisted ⌃⇧9 isn't listed")
         #expect(GestureHelp.summary(for: .lavender) == "Lavender toy")
     }
 
@@ -30,7 +30,7 @@ struct GestureHelpTests {
         try TestPictures.withHandsFolder { folder in
             let hand = try TestPictures.makeHand(in: folder)
             defer { CustomHands.remove(hand) }
-            try CustomHands.addGesture(to: hand, from: try TestPictures.handOnly("hand_line_2", to: folder.appendingPathComponent("wave.png")))
+            try CustomHands.addGesture(to: hand, from: try TestPictures.handOnly("hand_line_1", to: folder.appendingPathComponent("wave.png")))
             #expect(GestureHelp.summary(for: hand) == "Test hand. Gesture: ⌃⇧1")
         }
     }
@@ -55,11 +55,12 @@ struct GestureHelpTests {
         let bar = Toolbar()
         let line = try line
         bar.select(line)
-        #expect(bar.badgeText(of: line) == "3")
+        #expect(bar.badgeText(of: line) == "2")
         #expect(bar.tooltip(of: line) == GestureHelp.summary(for: line))
 
         bar.previewGestures(of: line)
         #expect(bar.isPreviewingGestures)
+        #expect(bar.gesturesInPreview == [1, 2], "the unlisted ⌃⇧9 isn't previewed")
         let preview = try #require(bar.snapshotGesturePreview())
         #expect(preview.pixelsWide > 100 && preview.pixelsHigh > 60)
         bar.hideGesturePreview()
@@ -94,7 +95,7 @@ struct CustomGestureTests {
     @Test("A hand takes nine gestures, in slots 1 to 9, and refuses a tenth")
     func nineSlots() throws {
         try withHand { hand, folder in
-            let source = try handOnly("hand_line_2", to: folder.appendingPathComponent("wave.png"))
+            let source = try handOnly("hand_line_1", to: folder.appendingPathComponent("wave.png"))
             for _ in Gesture.slots {
                 try CustomHands.addGesture(to: hand, from: source)
             }
@@ -106,7 +107,7 @@ struct CustomGestureTests {
     @Test("Removing your hand removes its gesture pictures too")
     func removeHandRemovesGestures() throws {
         try withHand(keep: true) { hand, folder in
-            let source = try handOnly("hand_line_3", to: folder.appendingPathComponent("okay.png"))
+            let source = try handOnly("hand_line_2", to: folder.appendingPathComponent("okay.png"))
             try CustomHands.addGesture(to: hand, from: source)
             let hands = folder.appendingPathComponent("Hands")
             #expect(try FileManager.default.contentsOfDirectory(atPath: hands.path).contains { $0.hasSuffix("_1.png") })

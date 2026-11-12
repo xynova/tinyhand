@@ -15,6 +15,13 @@ struct Gesture: Hashable {
     /// What people and screen readers call it, such as "Gesture 2".
     var label: String { "Gesture \(slot)" }
 
+    // Stock gestures that work but aren't listed: not counted on the badge, and not in the
+    // tooltip, the toolbar preview or Settings. Line art's ⌃⇧9 is the middle finger.
+    private static let unlisted: Set<String> = ["hand_line_9"]
+
+    /// Whether the badge, the tooltip, the toolbar preview and Settings show this gesture.
+    var isListed: Bool { !Gesture.unlisted.contains(assetName) }
+
     /// Reads a gesture from a picture name, given the hand's own picture name.
     static func parse(_ fileBase: String, hand base: String) -> Gesture? {
         guard fileBase.hasPrefix(base + "_") else {
@@ -125,9 +132,14 @@ struct PointerStyle: Hashable {
         ("line", "Line art", Ink.hex(0x1D1D21)),
     ]
 
-    /// This hand's gestures, in slot order.
+    /// This hand's gestures, in slot order, including unlisted ones.
     var gestures: [Gesture] {
         GestureCatalog.gestures(for: self)
+    }
+
+    /// The gestures people are shown: all of them except unlisted ones.
+    var listedGestures: [Gesture] {
+        gestures.filter(\.isListed)
     }
 
     func gesture(slot: Int) -> Gesture? {
