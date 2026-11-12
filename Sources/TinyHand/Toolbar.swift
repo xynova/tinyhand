@@ -147,6 +147,11 @@ final class Toolbar {
             self?.rebuildStyles()
             self?.refreshInk()
         }
+        // Adding or removing a gesture keeps the pinned hands the same but changes their badge,
+        // tooltip and hover preview, so the buttons are made again.
+        NotificationCenter.default.addObserver(forName: CustomHands.changed, object: nil, queue: .main) { [weak self] _ in
+            self?.rebuildStyles(force: true)
+        }
     }
 
     private func toggleInk() {
@@ -224,15 +229,17 @@ final class Toolbar {
         panel.setFrameOrigin(CGPoint(x: center.x - panel.frame.width / 2, y: center.y))
     }
 
-    private func rebuildStyles() {
+    private func rebuildStyles(force: Bool = false) {
         var styles = Preferences.pinnedStyles
         if let c = current, !styles.contains(c) {
             styles.append(c)
         }
-        if styles == shownStyles {
+        if styles == shownStyles && !force {
             return
         }
         shownStyles = styles
+        // The button under the pointer is about to go, so its mouseExited never comes.
+        hideGesturePreview()
         for b in styleButtons.values {
             actions[b] = nil
             b.removeFromSuperview()

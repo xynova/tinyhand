@@ -28,6 +28,10 @@ final class OverlayController {
     private var lastMenuScan = Date.distantPast
     private var menuOpeningUntil = Date.distantPast
     private var escHotKey: UInt32?
+    // Set when another app holds Esc: escRetryAt holds back the next try, escTaken keeps the log to one line.
+    private var escRetryAt = Date.distantPast
+    private var escTaken = false
+    private static let escRetryInterval: TimeInterval = 5
     private var gestureHotKeys: [UInt32] = []
 
     /// Gesture shortcuts: hold ⌃⇧ and the gesture's key; the gesture shows only while it is held.
@@ -507,6 +511,9 @@ final class OverlayController {
         armView.pointerHidden = false
         inputTap.passThroughRects = []
         setEscEnabled(false)
+        // The next time the hand comes on, Esc is tried straight away and a failure is logged again.
+        escRetryAt = .distantPast
+        escTaken = false
         setGestureKeysEnabled(false)
         ownMenuOpen = false
         CursorHider.show()
@@ -580,7 +587,7 @@ final class OverlayController {
                 let id = HotKeyCenter.shared.register(
                     keyCode: UInt32(keyCode), modifiers: OverlayController.gestureModifiers,
                     action: { [weak self] in self?.showGesture(key: key) },
-                    onRelease: { [weak self] in self?.showGesture(key: nil) })
+                    onRelease: { [weak self] in self?.releaseGesture(key: key) })
                 if let id = id {
                     gestureHotKeys.append(id)
                 } else {
@@ -604,6 +611,14 @@ final class OverlayController {
         setGestureKeysEnabled(true)
     }
 
+    // Letting go of a key ends only its own gesture: hold ⌃⇧S, press ⌃⇧M, let go of S, and M stays.
+    private func releaseGesture(key: Character) {
+        guard armView.gesture?.key == key else {
+            return
+        }
+        showGesture(key: nil)
+    }
+
     private func showGesture(key: Character?) {
         guard isActive else {
             return
@@ -622,12 +637,23 @@ final class OverlayController {
         wake()
     }
 
+    // updateZones calls this on every tick, so when another app holds Esc it tries again only
+    // every few seconds and logs the failure once, not 120 times a second.
     private func setEscEnabled(_ enabled: Bool, why: String = "") {
-        if enabled && isActive && escHotKey == nil {
+        if enabled && isActive && escHotKey == nil && Date() >= escRetryAt {
             escHotKey = HotKeyCenter.shared.register(keyCode: UInt32(kVK_Escape), modifiers: 0) { [weak self] in
                 self?.exit()
             }
-            Log.write(escHotKey == nil ? "Esc could not be registered (taken by another app)" : "Esc on")
+            if escHotKey != nil {
+                escTaken = false
+                Log.write("Esc on")
+            } else {
+                escRetryAt = Date().addingTimeInterval(OverlayController.escRetryInterval)
+                if !escTaken {
+                    escTaken = true
+                    Log.write("Esc could not be registered (taken by another app), trying again every \(Int(OverlayController.escRetryInterval)) s")
+                }
+            }
         }
         if !enabled, let id = escHotKey {
             HotKeyCenter.shared.unregister(id)
