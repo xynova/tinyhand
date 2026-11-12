@@ -5,6 +5,10 @@ import AppKit
 enum GestureHelp {
     /// The colour of the count badge, on the toolbar and in Settings.
     static let badgeColor = NSColor(srgbRed: 0.48, green: 0.38, blue: 0.94, alpha: 1)
+    /// The badge's size, text size and border width, the same on the toolbar and in Settings.
+    static let badgeSize: CGFloat = 16
+    static let badgeFontSize: CGFloat = 9.5
+    static let badgeBorder: CGFloat = 1.5
 
     /// The badge on a hand that has gestures: how many it has. Nil for a hand without any.
     static func badge(for style: PointerStyle) -> String? {

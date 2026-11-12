@@ -81,8 +81,12 @@ shows what each one is. To make one from a picture of the gesture on a transpare
 sitting on the hand's own stick:
 
 ```sh
-swift build && .build/debug/TinyHand --make-gesture assets/hand_line.webp shaka.png assets/hand_line_s.png
+swift build && .build/debug/TinyHand --make-gesture assets/hand_line.webp shaka.png /tmp/hand_line_s.png
+cwebp -lossless /tmp/hand_line_s.png -o assets/hand_line_s.webp
 ```
+
+Built-in pictures ship as WebP, and TinyHand looks for a WebP before a PNG of the same name,
+so a PNG beside an existing WebP never shows.
 
 The preview has its own name and settings, can't update itself, and leaves `tinyhand://`
 links to your own TinyHand. It backs up `~/Library/Application Support/TinyHand` when it

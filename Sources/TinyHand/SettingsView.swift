@@ -165,7 +165,7 @@ final class SettingsModel: ObservableObject {
     func chooseGestureFile(for hand: PointerStyle) {
         let free = CustomHands.freeKeys(for: hand)
         guard !free.isEmpty else {
-            gestureMessage = "\(hand.title) already has a gesture on every key. Remove one first."
+            gestureMessage = CustomHands.noFreeKeyMessage(hand)
             revision += 1
             return
         }
@@ -173,7 +173,7 @@ final class SettingsModel: ObservableObject {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.png, .webP, .image]
         panel.allowsMultipleSelection = false
-        panel.message = "Pick the PNG of a gesture for \(hand.title), on a transparent background"
+        panel.message = "Pick a picture of a gesture for \(hand.title), on a transparent background"
         panel.accessoryView = chooser.view
         panel.isAccessoryViewDisclosed = true
         panel.delegate = chooser
@@ -186,6 +186,7 @@ final class SettingsModel: ObservableObject {
         } catch let problem as HandMaker.Problem {
             gestureMessage = problem.message
         } catch {
+            Log.write("couldn't add gesture to \(hand.rawValue): \(error.localizedDescription)")
             gestureMessage = "TinyHand couldn't add that gesture."
         }
         revision += 1
@@ -709,11 +710,11 @@ private struct GestureBadge: View {
     var body: some View {
         if let count = GestureHelp.badge(for: style) {
             Text(count)
-                .font(.system(size: 9.5, weight: .bold))
+                .font(.system(size: GestureHelp.badgeFontSize, weight: .bold))
                 .foregroundColor(.white)
-                .frame(width: 16, height: 16)
+                .frame(width: GestureHelp.badgeSize, height: GestureHelp.badgeSize)
                 .background(Circle().fill(Color(nsColor: GestureHelp.badgeColor)))
-                .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 1.5))
+                .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: GestureHelp.badgeBorder))
                 .accessibilityHidden(true)
         }
     }
@@ -850,7 +851,7 @@ private struct PickerCell: View {
 
 // Where each hand's cell is in the picker, so the gesture preview can sit next to the hovered one.
 private struct PickerCellBounds: PreferenceKey {
-    static var defaultValue: [PointerStyle: Anchor<CGRect>] = [:]
+    static let defaultValue: [PointerStyle: Anchor<CGRect>] = [:]
 
     static func reduce(value: inout [PointerStyle: Anchor<CGRect>], nextValue: () -> [PointerStyle: Anchor<CGRect>]) {
         value.merge(nextValue()) { $1 }
@@ -958,16 +959,14 @@ private struct GestureHandRow: View {
             HStack {
                 Text(hand.title).font(.system(size: 13))
                 Spacer()
-                if hand.isCustom {
-                    TextButton(title: "Add gesture…") { model.chooseGestureFile(for: hand) }
-                }
+                TextButton(title: "Add gesture…") { model.chooseGestureFile(for: hand) }
             }
             if hand.gestures.isEmpty {
                 Text("No gestures yet.").font(.system(size: 11)).foregroundColor(.secondary)
             } else {
                 HStack(spacing: 8) {
                     ForEach(hand.gestures, id: \.self) { gesture in
-                        GestureTile(gesture: gesture, removable: hand.isCustom) {
+                        GestureTile(gesture: gesture) {
                             model.removeGesture(gesture, from: hand)
                         }
                     }
@@ -981,7 +980,6 @@ private struct GestureHandRow: View {
 
 private struct GestureTile: View {
     let gesture: Gesture
-    let removable: Bool
     let remove: () -> Void
     @State private var hovering = false
 
@@ -996,7 +994,7 @@ private struct GestureTile: View {
                     }
                 }
                 .frame(width: 44, height: 44)
-                if removable && hovering {
+                if hovering {
                     Button(action: remove) {
                         Image(systemName: "xmark")
                             .font(.system(size: 8, weight: .bold))
@@ -1847,7 +1845,7 @@ final class GestureKeyChooser: NSObject, NSOpenSavePanelDelegate {
     init(free keys: [Character]) {
         self.keys = keys
         menu = NSPopUpButton(frame: .zero, pullsDown: false)
-        menu.addItems(withTitles: keys.map { "⌃⇧\($0.uppercased())" })
+        menu.addItems(withTitles: keys.map(Gesture.shortcut(for:)))
         let label = NSTextField(labelWithString: "Show it with")
         let row = NSStackView(views: [label, menu])
         row.orientation = .horizontal

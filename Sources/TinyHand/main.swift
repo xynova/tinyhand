@@ -41,11 +41,8 @@ if let idx = CommandLine.arguments.firstIndex(of: "--toolbar-test") {
     // --preview: the gesture preview shown when hovering the selected hand.
     if CommandLine.arguments.contains("--preview"), let style = selected {
         bar.previewGestures(of: style)
-        if let data = bar.snapshotGesturePreview()?.representation(using: .png, properties: [:]) {
-            let previewOut = out.replacingOccurrences(of: ".png", with: "-preview.png")
-            try? data.write(to: URL(fileURLWithPath: previewOut))
-            print("rendered \(previewOut)")
-        }
+        RenderTest.save(bar.snapshotGesturePreview()?.representation(using: .png, properties: [:]),
+                        to: out.replacingOccurrences(of: ".png", with: "-preview.png"))
     }
     if CommandLine.arguments.contains("--ink"), let data = bar.snapshotInkTray()?.representation(using: .png, properties: [:]) {
         let trayOut = out.replacingOccurrences(of: ".png", with: "-ink.png")
@@ -108,11 +105,11 @@ if let idx = CommandLine.arguments.firstIndex(of: "--key-chooser-test") {
     view.wantsLayer = true
     view.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
     view.layoutSubtreeIfNeeded()
-    if let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+    let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+    if let rep = rep {
         view.cacheDisplay(in: view.bounds, to: rep)
-        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: out))
-        print("rendered \(out)")
     }
+    RenderTest.save(rep?.representation(using: .png, properties: [:]), to: out)
     exit(0)
 }
 
@@ -122,10 +119,7 @@ if let idx = CommandLine.arguments.firstIndex(of: "--picker-test") {
     let out = CommandLine.arguments.count > idx + 1 ? CommandLine.arguments[idx + 1] : "/tmp/picker.png"
     let hovered = CommandLine.arguments.count > idx + 2 ? PointerStyle(rawValue: CommandLine.arguments[idx + 2]) : nil
     let dark = ProcessInfo.processInfo.environment["TH_DARK"] != nil
-    if let data = snapshotPointerPicker(hovered: hovered, dark: dark)?.representation(using: .png, properties: [:]) {
-        try? data.write(to: URL(fileURLWithPath: out))
-        print("rendered \(out)")
-    }
+    RenderTest.save(snapshotPointerPicker(hovered: hovered, dark: dark)?.representation(using: .png, properties: [:]), to: out)
     exit(0)
 }
 

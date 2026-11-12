@@ -1,6 +1,22 @@
 import AppKit
 
 enum RenderTest {
+    /// Writes a render-test picture and says where, or says why not and exits 1, so a script
+    /// never trusts a "rendered" line for a file that wasn't written.
+    static func save(_ data: Data?, to path: String) {
+        guard let data = data else {
+            print("failed: nothing to render for \(path)")
+            exit(1)
+        }
+        do {
+            try data.write(to: URL(fileURLWithPath: path))
+            print("rendered \(path)")
+        } catch {
+            print("failed: \(error)")
+            exit(1)
+        }
+    }
+
     static func run(outPath: String) {
         _ = NSApplication.shared
 

@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "indentation": { "spaces": 4 },
+  "tabWidth": 4,
+  "lineLength": 200,
+  "respectsExistingLineBreaks": true,
+  "lineBreakBeforeEachArgument": false,
+  "indentConditionalCompilationBlocks": true
+}

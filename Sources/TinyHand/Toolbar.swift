@@ -19,17 +19,43 @@ final class Toolbar {
 
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+        // Only the button's own hover area is replaced; AppKit keeps its own areas on the view
+        // (for tooltips, for example), and those stay.
+        private var hoverArea: NSTrackingArea?
+
         override func updateTrackingAreas() {
             super.updateTrackingAreas()
-            trackingAreas.forEach(removeTrackingArea)
+            if let area = hoverArea {
+                removeTrackingArea(area)
+                hoverArea = nil
+            }
             if onHover != nil {
-                addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-                                               owner: self, userInfo: nil))
+                let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                          owner: self, userInfo: nil)
+                addTrackingArea(area)
+                hoverArea = area
             }
         }
 
         override func mouseEntered(with event: NSEvent) { onHover?(true) }
         override func mouseExited(with event: NSEvent) { onHover?(false) }
+    }
+
+    // The count badge on a hand's button. It never takes a click, so a click on the badge
+    // picks the hand like anywhere else on the button.
+    private final class BadgeView: NSView {
+        let label: NSTextField
+
+        init(_ text: String) {
+            label = NSTextField(labelWithString: text)
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) not used")
+        }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }
 
     private let panel: Panel
@@ -294,17 +320,9 @@ final class Toolbar {
     }
 
     func snapshot() -> NSBitmapImageRep? {
-        guard let view = panel.contentView else {
-            return nil
-        }
-        view.layer?.backgroundColor = NSColor(white: 0.16, alpha: 1).cgColor
-        view.layoutSubtreeIfNeeded()
-        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
-            return nil
-        }
-        view.cacheDisplay(in: view.bounds, to: rep)
-        view.layer?.backgroundColor = nil
-        return rep
+        // The toolbar itself stays on screen, so its background goes back to clear afterwards.
+        defer { panel.contentView?.layer?.backgroundColor = nil }
+        return Toolbar.snapshot(of: panel.contentView)
     }
 
     func snapshotInkTray() -> NSBitmapImageRep? {
@@ -413,8 +431,40 @@ final class Toolbar {
         }
         hideHint()
         let (p, bg) = floatingPanel(radius: 14)
+        let content = Toolbar.gesturePreviewContent(style.title, gestures)
+        content.translatesAutoresizingMaskIntoConstraints = false
+        bg.addSubview(content)
+        // The padding is set here rather than as the stack's edge insets: the stack left its
+        // right inset out of its fitting size, so the last picture touched the panel's edge.
+        let pad = NSEdgeInsets(top: 10, left: 14, bottom: 12, right: 14)
+        let size = content.fittingSize
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: bg.leadingAnchor, constant: pad.left),
+            content.topAnchor.constraint(equalTo: bg.topAnchor, constant: pad.top),
+            content.widthAnchor.constraint(equalToConstant: size.width),
+            content.heightAnchor.constraint(equalToConstant: size.height),
+        ])
+        p.setContentSize(NSSize(width: pad.left + size.width + pad.right,
+                                height: pad.top + size.height + pad.bottom))
+        place(p, over: button)
+        p.orderFrontRegardless()
+        preview = p
+        previewedKeys = gestures.map(\.key)
+    }
 
-        let title = NSTextField(labelWithString: "\(style.title) gestures")
+    // Above the hand's button, kept over the toolbar.
+    private func place(_ p: Panel, over button: NSView) {
+        var midX = panel.frame.midX
+        if let w = button.window {
+            midX = w.convertToScreen(button.convert(button.bounds, to: nil)).midX
+        }
+        let x = min(max(midX - p.frame.width / 2, panel.frame.minX), panel.frame.maxX - p.frame.width)
+        p.setFrameOrigin(CGPoint(x: x, y: panel.frame.maxY + 10))
+    }
+
+    // The preview's content: a title, then each gesture's picture and shortcut in a row.
+    private static func gesturePreviewContent(_ handTitle: String, _ gestures: [Gesture]) -> NSStackView {
+        let title = NSTextField(labelWithString: "\(handTitle) gestures")
         title.font = .systemFont(ofSize: 12, weight: .semibold)
         title.textColor = .white
         let row = NSStackView()
@@ -441,31 +491,7 @@ final class Toolbar {
         stackAll.orientation = .vertical
         stackAll.alignment = .leading
         stackAll.spacing = 8
-        stackAll.translatesAutoresizingMaskIntoConstraints = false
-        bg.addSubview(stackAll)
-        // The padding is set here rather than as the stack's edge insets: the stack left its
-        // right inset out of its fitting size, so the last picture touched the panel's edge.
-        let pad = NSEdgeInsets(top: 10, left: 14, bottom: 12, right: 14)
-        let content = stackAll.fittingSize
-        NSLayoutConstraint.activate([
-            stackAll.leadingAnchor.constraint(equalTo: bg.leadingAnchor, constant: pad.left),
-            stackAll.topAnchor.constraint(equalTo: bg.topAnchor, constant: pad.top),
-            stackAll.widthAnchor.constraint(equalToConstant: content.width),
-            stackAll.heightAnchor.constraint(equalToConstant: content.height),
-        ])
-        p.setContentSize(NSSize(width: pad.left + content.width + pad.right,
-                                height: pad.top + content.height + pad.bottom))
-
-        // Above the hand's button, kept over the toolbar.
-        var midX = panel.frame.midX
-        if let w = button.window {
-            midX = w.convertToScreen(button.convert(button.bounds, to: nil)).midX
-        }
-        let x = min(max(midX - p.frame.width / 2, panel.frame.minX), panel.frame.maxX - p.frame.width)
-        p.setFrameOrigin(CGPoint(x: x, y: panel.frame.maxY + 10))
-        p.orderFrontRegardless()
-        preview = p
-        previewedKeys = gestures.map(\.key)
+        return stackAll
     }
 
     func hideGesturePreview() {
@@ -476,23 +502,23 @@ final class Toolbar {
 
     /// The small count badge on a hand that has gestures.
     private static func badge(_ text: String) -> NSView {
-        let v = NSView()
+        let v = BadgeView(text)
         v.wantsLayer = true
         v.layer?.backgroundColor = GestureHelp.badgeColor.cgColor
-        v.layer?.cornerRadius = 8
-        v.layer?.borderWidth = 1.5
+        v.layer?.cornerRadius = GestureHelp.badgeSize / 2
+        v.layer?.borderWidth = GestureHelp.badgeBorder
         v.layer?.borderColor = NSColor(white: 0.16, alpha: 1).cgColor
         v.translatesAutoresizingMaskIntoConstraints = false
         v.setAccessibilityElement(false)
-        let label = NSTextField(labelWithString: text)
-        label.font = .systemFont(ofSize: 9.5, weight: .bold)
+        let label = v.label
+        label.font = .systemFont(ofSize: GestureHelp.badgeFontSize, weight: .bold)
         label.textColor = .white
         label.alignment = .center
         label.translatesAutoresizingMaskIntoConstraints = false
         v.addSubview(label)
         NSLayoutConstraint.activate([
-            v.widthAnchor.constraint(equalToConstant: 16),
-            v.heightAnchor.constraint(equalToConstant: 16),
+            v.widthAnchor.constraint(equalToConstant: GestureHelp.badgeSize),
+            v.heightAnchor.constraint(equalToConstant: GestureHelp.badgeSize),
             label.centerXAnchor.constraint(equalTo: v.centerXAnchor),
             label.centerYAnchor.constraint(equalTo: v.centerYAnchor),
         ])
@@ -678,7 +704,7 @@ extension Toolbar {
 
     /// The badge text on a hand's toolbar button, if it has one.
     func badgeText(of style: PointerStyle) -> String? {
-        styleButtons[style]?.subviews.compactMap { $0.subviews.first as? NSTextField }.first?.stringValue
+        styleButtons[style]?.subviews.lazy.compactMap { $0 as? BadgeView }.first?.label.stringValue
     }
 
     /// The tooltip on a hand's toolbar button.

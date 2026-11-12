@@ -15,3 +15,7 @@ jobs:
         run: swift build -c release --arch arm64 --arch x86_64
       - name: Test
         run: swift test --no-parallel
+      # Reports style with the repo's .swift-format; it doesn't fail the build until the
+      # existing differences are cleaned up, at which point add --strict.
+      - name: Lint
+        run: swift format lint --recursive Sources Tests Package.swift

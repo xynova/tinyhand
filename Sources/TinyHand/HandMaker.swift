@@ -37,6 +37,32 @@ enum HandMaker {
         func alpha(_ x: Int, _ y: Int) -> UInt8 {
             rgba[(y * width + x) * 4 + 3]
         }
+
+        /// The leftmost and rightmost solid pixels of row y within xs, or nil for an empty row.
+        func rowSpan(_ y: Int, _ xs: ClosedRange<Int>) -> (lo: Int, hi: Int)? {
+            var lo = -1, hi = -1
+            for x in xs where alpha(x, y) > 128 {
+                if lo < 0 { lo = x }
+                hi = x
+            }
+            return lo < 0 ? nil : (lo, hi)
+        }
+
+        /// How many solid pixels each row has, top to bottom.
+        func rowCounts() -> [Int] {
+            (0..<height).map { y in (0..<width).reduce(0) { $0 + (alpha($1, y) > 128 ? 1 : 0) } }
+        }
+
+        /// The widest row within rows and xs: its width and centre.
+        func widestRow(_ rows: ClosedRange<Int>, _ xs: ClosedRange<Int>) -> (width: Int, center: Double)? {
+            var best: (width: Int, center: Double)?
+            for y in rows {
+                if let s = rowSpan(y, xs), s.hi - s.lo + 1 > (best?.width ?? 0) {
+                    best = (s.hi - s.lo + 1, Double(s.lo + s.hi) / 2)
+                }
+            }
+            return best
+        }
     }
 
     static func make(from url: URL) throws -> (image: CGImage, ink: UInt32) {
@@ -75,10 +101,11 @@ enum HandMaker {
             throw Problem(message: "TinyHand couldn't find the wrist of the hand this gesture is for.")
         }
         let base = cuffSpan(pixels, box)
+        let bw = CGFloat(box.maxX - box.minX + 1)
         let bh = CGFloat(box.maxY - box.minY + 1)
-        // Wrists the same width, but never so tall that the fingers leave the picture.
+        // Wrists the same width, but never so tall or so wide that the fingers leave the picture.
         var scale = CGFloat(wrist.width) / CGFloat(max(1, base.width))
-        scale = min(scale, CGFloat(wrist.bottom - 8) / bh)
+        scale = min(scale, CGFloat(wrist.bottom - 8) / bh, CGFloat(pointing.width - 16) / bw)
         let drawW = CGFloat(pixels.width) * scale
         let drawH = CGFloat(pixels.height) * scale
         let originX = CGFloat(wrist.center) - CGFloat(base.center + 0.5) * scale
@@ -104,58 +131,25 @@ enum HandMaker {
     }
 
     // Where a hand picture's hand ends and its stick begins: the bottom row of the hand,
-    // and the width and centre of the hand just above it.
+    // and the width and centre of the hand just above it. The row comes from HandAsset's own
+    // wrist rule, so the gesture's cuff sits on the row ArmView splits the picture at.
     private static func pointingWrist(_ p: Pixels) -> (bottom: Int, width: Int, center: Double)? {
-        func span(_ y: Int) -> (Int, Int)? {
-            var lo = -1, hi = -1
-            for x in 0..<p.width where p.alpha(x, y) > 128 {
-                if lo < 0 { lo = x }
-                hi = x
-            }
-            return lo < 0 ? nil : (lo, hi)
-        }
-        guard let top = (0..<p.height).first(where: { span($0) != nil }) else {
-            return nil
-        }
-        let widest = (top..<min(p.height, top + p.height / 2)).compactMap { span($0).map { $0.1 - $0.0 } }.max() ?? 0
-        // The stick starts at the first row, past the widest part, that is much narrower.
-        var y = top
-        var passedWide = false
-        while y < p.height, let s = span(y) {
-            let width = s.1 - s.0
-            if width > widest * 6 / 10 { passedWide = true }
-            if passedWide && width < widest * 35 / 100 { break }
-            y += 1
-        }
-        let bottom = y
-        guard bottom > top + 10 else {
+        guard let found = HandAsset.wristRow(counts: p.rowCounts()), found.wrist > found.top + 10 else {
             return nil
         }
         // The cuff: the widest row in the bottom 8% of the hand (a rounded cuff narrows at its very bottom).
-        let band = max(4, (bottom - top) * 8 / 100)
-        var best: (Int, Int)?
-        for row in (bottom - band)..<bottom {
-            if let s = span(row), s.1 - s.0 > (best.map { $0.1 - $0.0 } ?? -1) { best = s }
-        }
-        guard let cuff = best else {
+        let band = max(4, (found.wrist - found.top) * 8 / 100)
+        guard let cuff = p.widestRow((found.wrist - band)...(found.wrist - 1), 0...(p.width - 1)) else {
             return nil
         }
-        return (bottom, cuff.1 - cuff.0 + 1, Double(cuff.0 + cuff.1) / 2)
+        return (found.wrist, cuff.width, cuff.center)
     }
 
     // The same measure for a gesture picture: the widest row in the bottom 8% of the hand.
     private static func cuffSpan(_ p: Pixels, _ box: (minX: Int, minY: Int, maxX: Int, maxY: Int)) -> (width: Int, center: Double) {
         let band = max(4, (box.maxY - box.minY + 1) * 8 / 100)
-        var best = (width: 0, center: Double(box.minX + box.maxX) / 2)
-        for y in (box.maxY - band + 1)...box.maxY {
-            var lo = -1, hi = -1
-            for x in box.minX...box.maxX where p.alpha(x, y) > 128 {
-                if lo < 0 { lo = x }
-                hi = x
-            }
-            if lo >= 0 && hi - lo + 1 > best.width { best = (hi - lo + 1, Double(lo + hi) / 2) }
-        }
-        return best
+        return p.widestRow((box.maxY - band + 1)...box.maxY, box.minX...box.maxX)
+            ?? (0, Double(box.minX + box.maxX) / 2)
     }
 
     private static func read(_ image: CGImage) throws -> Pixels {
@@ -306,9 +300,9 @@ enum HandMaker {
         var lo = p.width
         var hi = -1
         for y in max(box.minY, box.maxY - max(2, bh * 4 / 100))...box.maxY {
-            for x in box.minX...box.maxX where p.alpha(x, y) > 128 {
-                lo = min(lo, x)
-                hi = max(hi, x)
+            if let s = p.rowSpan(y, box.minX...box.maxX) {
+                lo = min(lo, s.lo)
+                hi = max(hi, s.hi)
             }
         }
         return hi < 0 ? (0, Double(box.minX + box.maxX) / 2) : (hi - lo + 1, Double(lo + hi) / 2)
@@ -493,6 +487,11 @@ enum CustomHands {
         try? save(all.filter { $0.id != style.rawValue })
     }
 
+    /// What Settings says when a hand has a gesture on every key.
+    static func noFreeKeyMessage(_ style: PointerStyle) -> String {
+        "\(style.title) already has a gesture on every key. Remove one first."
+    }
+
     /// The keys a hand has no gesture on yet, digits then letters.
     static func freeKeys(for style: PointerStyle) -> [Character] {
         let used = Set(style.gestures.map(\.key))
@@ -518,16 +517,23 @@ enum CustomHands {
         }
         let free = freeKeys(for: style)
         guard let first = free.first else {
-            throw HandMaker.Problem(message: "\(style.title) already has a gesture on every key. Remove one first.")
+            throw HandMaker.Problem(message: noFreeKeyMessage(style))
         }
         let key = picked.map { Character($0.lowercased()) } ?? suggestedKey(for: url, free: free) ?? first
         guard free.contains(key) else {
-            throw HandMaker.Problem(message: "\(style.title) already has a gesture on ⌃⇧\(key.uppercased()). Remove it first, or pick another key.")
+            throw HandMaker.Problem(message: "\(style.title) already has a gesture on \(Gesture.shortcut(for: key)). Remove it first, or pick another key.")
         }
         let image = try HandMaker.makeGesture(from: url, matching: pointing)
         let fileBase = "\(base)_\(key)"
+        let file = directory.appendingPathComponent("\(fileBase).png")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try HandMaker.write(image, to: directory.appendingPathComponent("\(fileBase).png"))
+        try HandMaker.write(image, to: file)
+        // Load it the way the hand will, so a gesture TinyHand can't show is never reported as added.
+        HandAsset.forget(fileBase)
+        guard HandAsset.load(fileBase) != nil else {
+            try? FileManager.default.removeItem(at: file)
+            throw HandMaker.Problem(message: "TinyHand made the gesture but couldn't find its wrist. Try a picture with the cuff at the bottom.")
+        }
         GestureCatalog.forget(style)
         NotificationCenter.default.post(name: changed, object: nil)
         guard let gesture = style.gesture(key: key) else {
@@ -545,6 +551,7 @@ enum CustomHands {
         do {
             try FileManager.default.removeItem(at: directory.appendingPathComponent("\(gesture.assetName).png"))
         } catch {
+            Log.write("couldn't remove gesture \(gesture.assetName): \(error.localizedDescription)")
             throw HandMaker.Problem(message: "TinyHand couldn't remove \(gesture.label.lowercased()).")
         }
         HandAsset.forget(gesture.assetName)
