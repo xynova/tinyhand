@@ -28,6 +28,18 @@ final class OverlayController {
     private var lastMenuScan = Date.distantPast
     private var menuOpeningUntil = Date.distantPast
     private var escHotKey: UInt32?
+    private var gestureHotKeys: [UInt32] = []
+
+    /// Gesture shortcuts: hold ⌃⇧ and the number; the gesture shows only while it is held.
+    /// Not ⌥: Option is the default "click for real" key, which hides the hand while held.
+    /// Shift only acts when tapped on its own (double-tap for click-through), so holding it
+    /// together with ⌃ is free.
+    static let gestureModifiers = UInt32(controlKey | shiftKey)
+    // ⌃⇧1 to ⌃⇧9 show whatever the current hand has in that slot.
+    static let gestureKeys: [(slot: Int, keyCode: Int)] = [
+        (1, kVK_ANSI_1), (2, kVK_ANSI_2), (3, kVK_ANSI_3), (4, kVK_ANSI_4), (5, kVK_ANSI_5),
+        (6, kVK_ANSI_6), (7, kVK_ANSI_7), (8, kVK_ANSI_8), (9, kVK_ANSI_9),
+    ]
     private var lastPermissionCheck = Date.distantPast
 
     private static let busyInterval: TimeInterval = 1.0 / 120.0
@@ -451,6 +463,7 @@ final class OverlayController {
             }
         }
         setEscEnabled(true)
+        setGestureKeysEnabled(true)
         onActiveChanged?()
         return installed
     }
@@ -482,6 +495,7 @@ final class OverlayController {
         armView.pointerHidden = false
         inputTap.passThroughRects = []
         setEscEnabled(false)
+        setGestureKeysEnabled(false)
         ownMenuOpen = false
         CursorHider.show()
         onActiveChanged?()
@@ -512,7 +526,13 @@ final class OverlayController {
         menuHover = overMenu
         let through = inputTap.clickThrough
         let normal = !drawing && !Preferences.interactKeepsHand && ((interacting && !through) || overMenu || ownMenuOpen)
-        setEscEnabled(menuRects.isEmpty && !ownMenuOpen && !through)
+        var escOffBecause: [String] = []
+        if !menuRects.isEmpty {
+            escOffBecause.append("menus seen: " + menuRects.map { "\(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))x\(Int($0.height))" }.joined(separator: "; "))
+        }
+        if ownMenuOpen { escOffBecause.append("TinyHand's own menu is open") }
+        if through { escOffBecause.append("click-through is on") }
+        setEscEnabled(escOffBecause.isEmpty, why: escOffBecause.joined(separator: ", "))
 
         if normal != normalCursor {
             let at = "at \(Int(mouse.x)),\(Int(mouse.y))"
@@ -536,15 +556,61 @@ final class OverlayController {
         inputTap.passThroughRects = rects
     }
 
-    private func setEscEnabled(_ enabled: Bool) {
+    // The gesture shortcuts exist only while the hand is on, so they don't take ⌃⇧1-3 from other
+    // apps the rest of the time.
+    private func setGestureKeysEnabled(_ enabled: Bool) {
+        if enabled && isActive && gestureHotKeys.isEmpty {
+            for key in OverlayController.gestureKeys {
+                let id = HotKeyCenter.shared.register(
+                    keyCode: UInt32(key.keyCode), modifiers: OverlayController.gestureModifiers,
+                    action: { [weak self] in self?.showGesture(slot: key.slot) },
+                    onRelease: { [weak self] in self?.showGesture(slot: nil) })
+                if let id = id {
+                    gestureHotKeys.append(id)
+                } else {
+                    Log.write("gesture shortcut ⌃⇧\(key.slot) is taken by another app")
+                }
+            }
+        }
+        if !enabled {
+            gestureHotKeys.forEach(HotKeyCenter.shared.unregister)
+            gestureHotKeys = []
+            armView.setGesture(nil)
+        }
+    }
+
+    private func showGesture(slot: Int?) {
+        guard isActive else {
+            return
+        }
+        let gesture = slot.flatMap { armView.style.gesture(slot: $0) }
+        // Key repeat can send the same press again; showing the same gesture again is a no-op.
+        guard gesture != armView.gesture else {
+            if let slot = slot, gesture == nil {
+                Log.write("gesture ⌃⇧\(slot) asked for, but \(armView.style.rawValue) has nothing in that slot")
+            }
+            return
+        }
+        armView.setGesture(gesture)
+        if let gesture = gesture {
+            Log.write("gesture \(gesture.slot) shown on \(armView.style.rawValue)")
+        } else {
+            Log.write("gesture released, pointing again")
+        }
+        wake()
+    }
+
+    private func setEscEnabled(_ enabled: Bool, why: String = "") {
         if enabled && isActive && escHotKey == nil {
             escHotKey = HotKeyCenter.shared.register(keyCode: UInt32(kVK_Escape), modifiers: 0) { [weak self] in
                 self?.exit()
             }
+            Log.write(escHotKey == nil ? "Esc could not be registered (taken by another app)" : "Esc on")
         }
         if !enabled, let id = escHotKey {
             HotKeyCenter.shared.unregister(id)
             escHotKey = nil
+            Log.write("Esc off\(why.isEmpty ? "" : " (\(why))")")
         }
     }
 

@@ -34,6 +34,11 @@ make_bundle() {
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
     cp "$binary" "$app/Contents/MacOS/$APP_NAME"
     cp "$ROOT"/assets/hand_*.png "$app/Contents/Resources/"
+    # Newer hand pictures are lossless WebP (cwebp -lossless -z 9 -exact): exact pixels, about a
+    # tenth of the PNG size for line art. The loop copies none if there are none.
+    for f in "$ROOT"/assets/hand_*.webp; do
+        [ -e "$f" ] && cp "$f" "$app/Contents/Resources/"
+    done
     cp "$ROOT"/assets/sounds/tap_*.wav "$ROOT/assets/AppIcon.icns" "$ROOT/assets/Assets.car" "$app/Contents/Resources/"
     cp "$ROOT"/assets/menubar_*.png "$app/Contents/Resources/"
 

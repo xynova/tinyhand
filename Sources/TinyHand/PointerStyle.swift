@@ -1,5 +1,69 @@
 import AppKit
 
+// A pose a hand can show instead of pointing, while ⌃⇧ and its slot number are held.
+// A hand's gestures come from its picture files: the hand's own picture name, then _<slot>,
+// such as hand_line_2.webp, or custom-1a2b3c4d_1.png for a custom hand. Gestures have numbers,
+// not names: the picture shows what each one is.
+struct Gesture: Hashable {
+    static let slots = 1...9
+
+    let slot: Int
+    let assetName: String
+
+    var shortcut: String { "⌃⇧\(slot)" }
+
+    /// What people and screen readers call it, such as "Gesture 2".
+    var label: String { "Gesture \(slot)" }
+
+    /// Reads a gesture from a picture name, given the hand's own picture name.
+    static func parse(_ fileBase: String, hand base: String) -> Gesture? {
+        guard fileBase.hasPrefix(base + "_") else {
+            return nil
+        }
+        let rest = fileBase.dropFirst(base.count + 1)
+        guard rest.count == 1, let slot = Int(rest), slots.contains(slot) else {
+            return nil
+        }
+        return Gesture(slot: slot, assetName: fileBase)
+    }
+}
+
+// Finds each hand's gestures among its picture files, and remembers them until told to forget.
+enum GestureCatalog {
+    private static var known: [String: [Gesture]] = [:]
+
+    static func gestures(for style: PointerStyle) -> [Gesture] {
+        guard let base = style.assetName else {
+            return []
+        }
+        if let hit = known[base] {
+            return hit
+        }
+        // A slot's picture can be in more than one folder, or be both a WebP and a PNG; it is
+        // the same gesture, and HandAsset picks which file to load.
+        var bySlot: [Int: Gesture] = [:]
+        for folder in HandAsset.pictureFolders(custom: style.isCustom) {
+            for file in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] {
+                let url = URL(fileURLWithPath: file)
+                guard HandAsset.pictureTypes.contains(url.pathExtension.lowercased()),
+                      let gesture = Gesture.parse(url.deletingPathExtension().lastPathComponent, hand: base) else {
+                    continue
+                }
+                bySlot[gesture.slot] = gesture
+            }
+        }
+        let list = bySlot.keys.sorted().compactMap { bySlot[$0] }
+        known[base] = list
+        return list
+    }
+
+    static func forget(_ style: PointerStyle) {
+        if let base = style.assetName {
+            known[base] = nil
+        }
+    }
+}
+
 struct PointerStyle: Hashable {
     let rawValue: String
 
@@ -58,7 +122,17 @@ struct PointerStyle: Hashable {
         ("neon", "Neon", Ink.hex(0xE0309A)),
         ("leaf", "Leaf", Ink.hex(0x3E9E2E)),
         ("cookie", "Gingerbread", Ink.hex(0x9A5E2C)),
+        ("line", "Line art", Ink.hex(0x1D1D21)),
     ]
+
+    /// This hand's gestures, in slot order.
+    var gestures: [Gesture] {
+        GestureCatalog.gestures(for: self)
+    }
+
+    func gesture(slot: Int) -> Gesture? {
+        gestures.first { $0.slot == slot }
+    }
 
     static var builtInHands: [PointerStyle] {
         builtIn.map { PointerStyle($0.id) }
@@ -322,16 +396,28 @@ struct HandAsset {
         )
     }
 
-    private static func loadImage(_ name: String) -> CGImage? {
-        let exeDir = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
-        var urls: [URL] = []
-        urls.append(CustomHands.directory.appendingPathComponent("\(name).png"))
-        if let u = Bundle.main.url(forResource: name, withExtension: "png") {
-            urls.append(u)
+    /// Built-in hand pictures are WebP or PNG; each folder is checked for WebP first.
+    static let pictureTypes = ["webp", "png"]
+
+    /// Where hand pictures live, in the order they are looked for. Your own hands live in their
+    /// own folder; built-in hands in the app bundle, beside the program, or in assets/ when run
+    /// from the source tree. Gesture pictures are found in the same places.
+    static func pictureFolders(custom: Bool) -> [URL] {
+        if custom {
+            return [CustomHands.directory]
         }
-        urls.append(exeDir.appendingPathComponent("\(name).png"))
-        urls.append(exeDir.appendingPathComponent("assets/\(name).png"))
-        urls.append(URL(fileURLWithPath: "assets/\(name).png"))
+        let exeDir = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
+        return [Bundle.main.resourceURL, exeDir, exeDir.appendingPathComponent("assets"),
+                URL(fileURLWithPath: "assets")].compactMap { $0 }
+    }
+
+    private static func loadImage(_ name: String) -> CGImage? {
+        var urls = [CustomHands.directory.appendingPathComponent("\(name).png")]
+        for folder in pictureFolders(custom: false) {
+            for type in pictureTypes {
+                urls.append(folder.appendingPathComponent("\(name).\(type)"))
+            }
+        }
         for url in urls where FileManager.default.fileExists(atPath: url.path) {
             if let image = NSImage(contentsOf: url),
                let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
