@@ -163,15 +163,25 @@ final class SettingsModel: ObservableObject {
     }
 
     func chooseGestureFile(for hand: PointerStyle) {
+        let free = CustomHands.freeKeys(for: hand)
+        guard !free.isEmpty else {
+            gestureMessage = "\(hand.title) already has a gesture on every key. Remove one first."
+            revision += 1
+            return
+        }
+        let chooser = GestureKeyChooser(free: free)
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.png, .webP, .image]
         panel.allowsMultipleSelection = false
         panel.message = "Pick the PNG of a gesture for \(hand.title), on a transparent background"
+        panel.accessoryView = chooser.view
+        panel.isAccessoryViewDisclosed = true
+        panel.delegate = chooser
         guard panel.runModal() == .OK, let url = panel.url else {
             return
         }
         do {
-            let gesture = try CustomHands.addGesture(to: hand, from: url)
+            let gesture = try CustomHands.addGesture(to: hand, from: url, key: chooser.selectedKey)
             gestureMessage = "Added to \(hand.title). Hold \(gesture.shortcut) to show it."
         } catch let problem as HandMaker.Problem {
             gestureMessage = problem.message
@@ -800,22 +810,30 @@ private struct PickerCell: View {
     }
 }
 
-// Each hand that has gestures, with its gestures: picture and shortcut.
-// Your own hands are listed too, with a button to add gestures to them.
+// Your own hands, each with its gestures (picture and shortcut) and a button to add more.
+// Stock hands' gestures are found from their badge and hover preview instead.
 private struct GesturesCard: View {
     @ObservedObject var model: SettingsModel
 
     var body: some View {
-        let stock = PointerStyle.builtInHands.filter { !$0.listedGestures.isEmpty }
         let custom = PointerStyle.customHands
         VStack(alignment: .leading, spacing: 6) {
             Card(title: "Gestures") {
-                ForEach(stock + custom, id: \.self) { hand in
-                    GestureHandRow(hand: hand, model: model)
+                if custom.isEmpty {
+                    Text("Your own hands can have gestures. Make a hand below, then add its gestures here.")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                } else {
+                    ForEach(custom, id: \.self) { hand in
+                        GestureHandRow(hand: hand, model: model)
+                    }
                 }
             }
-            Text("Hold ⌃⇧ and a gesture's number while the pointer is on. Let go to point again."
-                 + (custom.isEmpty ? " Your own hands can have gestures too: make a hand below, then add its gestures here." : ""))
+            Text("Hold ⌃⇧ and a gesture's key while the pointer is on. Let go to point again. "
+                 + "Stock hands with gestures have a badge in the toolbar: hover over it to see them.")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
                 .padding(.horizontal, 4)
@@ -1712,6 +1730,60 @@ struct VisualEffect: NSViewRepresentable {
 }
 
 private let blankIcon = NSImage(size: NSSize(width: 64, height: 64))
+
+// The "Show it with" menu under the file picker when adding a gesture: the keys the hand has
+// free. It follows the picked file's name (Shaka.png picks ⌃⇧S) until someone changes it.
+final class GestureKeyChooser: NSObject, NSOpenSavePanelDelegate {
+    let view: NSView
+    private let keys: [Character]
+    private let menu: NSPopUpButton
+    private var changedByHand = false
+
+    init(free keys: [Character]) {
+        self.keys = keys
+        menu = NSPopUpButton(frame: .zero, pullsDown: false)
+        menu.addItems(withTitles: keys.map { "⌃⇧\($0.uppercased())" })
+        let label = NSTextField(labelWithString: "Show it with")
+        let row = NSStackView(views: [label, menu])
+        row.orientation = .horizontal
+        row.spacing = 8
+        row.edgeInsets = NSEdgeInsets(top: 10, left: 20, bottom: 10, right: 20)
+        row.frame = CGRect(origin: .zero, size: row.fittingSize)
+        view = row
+        super.init()
+        menu.target = self
+        menu.action = #selector(menuChanged)
+    }
+
+    /// The menu's choices, such as ["⌃⇧2", "⌃⇧S"].
+    var titles: [String] { menu.itemTitles }
+
+    var selectedKey: Character? {
+        keys.indices.contains(menu.indexOfSelectedItem) ? keys[menu.indexOfSelectedItem] : nil
+    }
+
+    func select(key: Character) {
+        if let index = keys.firstIndex(of: key) {
+            menu.selectItem(at: index)
+        }
+    }
+
+    /// Picks the key the file's name suggests, unless someone already chose one.
+    func follow(_ url: URL?) {
+        guard !changedByHand, let url = url, let key = CustomHands.suggestedKey(for: url, free: keys) else {
+            return
+        }
+        select(key: key)
+    }
+
+    @objc private func menuChanged() {
+        changedByHand = true
+    }
+
+    func panelSelectionDidChange(_ sender: Any?) {
+        follow((sender as? NSOpenPanel)?.url)
+    }
+}
 
 // MARK: - Test and render-test hooks
 

@@ -493,23 +493,44 @@ enum CustomHands {
         try? save(all.filter { $0.id != style.rawValue })
     }
 
-    /// Adds a gesture to a custom hand, in its first free slot.
+    /// The keys a hand has no gesture on yet, digits then letters.
+    static func freeKeys(for style: PointerStyle) -> [Character] {
+        let used = Set(style.gestures.map(\.key))
+        return Gesture.keys.filter { !used.contains($0) }
+    }
+
+    /// The key a picture's file name suggests: its first letter or digit, when that key is free.
+    /// Nil for an image tool's default name, such as "ChatGPT Image Nov 12, 2026…".
+    static func suggestedKey(for url: URL, free: [Character]) -> Character? {
+        let name = url.deletingPathExtension().lastPathComponent.lowercased()
+        guard !name.hasPrefix("chatgpt image"), let first = name.first(where: { Gesture.keys.contains($0) }) else {
+            return nil
+        }
+        return free.contains(first) ? first : nil
+    }
+
+    /// Adds a gesture to a custom hand on the key picked, or else the one its file name
+    /// suggests, or else the first free key.
     @discardableResult
-    static func addGesture(to style: PointerStyle, from url: URL) throws -> Gesture {
+    static func addGesture(to style: PointerStyle, from url: URL, key picked: Character? = nil) throws -> Gesture {
         guard style.isCustom, let base = style.assetName, let pointing = HandAsset.load(base)?.image else {
             throw HandMaker.Problem(message: "Gestures can only be added to your own hands.")
         }
-        let used = Set(style.gestures.map(\.slot))
-        guard let slot = Gesture.slots.first(where: { !used.contains($0) }) else {
-            throw HandMaker.Problem(message: "\(style.title) already has \(Gesture.slots.count) gestures. Remove one first.")
+        let free = freeKeys(for: style)
+        guard let first = free.first else {
+            throw HandMaker.Problem(message: "\(style.title) already has a gesture on every key. Remove one first.")
+        }
+        let key = picked.map { Character($0.lowercased()) } ?? suggestedKey(for: url, free: free) ?? first
+        guard free.contains(key) else {
+            throw HandMaker.Problem(message: "\(style.title) already has a gesture on ⌃⇧\(key.uppercased()). Remove it first, or pick another key.")
         }
         let image = try HandMaker.makeGesture(from: url, matching: pointing)
-        let fileBase = "\(base)_\(slot)"
+        let fileBase = "\(base)_\(key)"
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try HandMaker.write(image, to: directory.appendingPathComponent("\(fileBase).png"))
         GestureCatalog.forget(style)
         NotificationCenter.default.post(name: changed, object: nil)
-        guard let gesture = style.gesture(slot: slot) else {
+        guard let gesture = style.gesture(key: key) else {
             throw HandMaker.Problem(message: "TinyHand couldn't add that gesture.")
         }
         return gesture

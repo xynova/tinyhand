@@ -6,7 +6,7 @@ import Testing
 struct HandGesture: CustomTestStringConvertible {
     let style: PointerStyle
     let gesture: Gesture
-    var testDescription: String { "\(style.rawValue) \(gesture.slot)" }
+    var testDescription: String { "\(style.rawValue) \(gesture.key)" }
 }
 
 let allHandGestures: [HandGesture] = PointerStyle.builtInHands.flatMap { style in
@@ -16,15 +16,22 @@ let allHandGestures: [HandGesture] = PointerStyle.builtInHands.flatMap { style i
 // HandAsset keeps a small static cache with no lock, so these cases run one at a time.
 @Suite("Gesture hands", .serialized)
 struct GestureHandsTests {
-    @Test("Line art has gestures in slots 1, 2 and 9, and lists only 1 and 2")
-    func lineArtSlots() throws {
+    @Test("Line art has gestures on S, O and M, and lists only S and O")
+    func lineArtKeys() throws {
         let line = try #require(PointerStyle(rawValue: "line"))
-        #expect(line.gestures.map(\.slot) == [1, 2, 9])
-        #expect(line.gestures.map(\.assetName) == ["hand_line_1", "hand_line_2", "hand_line_9"])
-        #expect(line.listedGestures.map(\.slot) == [1, 2], "⌃⇧9 works but isn't shown")
-        #expect(line.gesture(slot: 2)?.label == "Gesture 2")
-        #expect(line.gesture(slot: 2)?.shortcut == "⌃⇧2")
-        #expect(line.gesture(slot: 3) == nil)
+        #expect(Set(line.gestures.map(\.assetName)) == ["hand_line_s", "hand_line_o", "hand_line_m"])
+        #expect(line.gestures.map(\.key) == ["m", "o", "s"], "listed digits first, then letters in order")
+        #expect(line.listedGestures.map(\.key) == ["o", "s"], "⌃⇧M works but isn't shown")
+        #expect(line.gesture(key: "s")?.label == "Gesture S")
+        #expect(line.gesture(key: "s")?.shortcut == "⌃⇧S")
+        #expect(line.gesture(key: "x") == nil)
+    }
+
+    @Test("Gestures are listed digits first, then letters")
+    func keyOrder() {
+        let keys: [Character] = ["s", "2", "a", "0", "1"]
+        let sorted = keys.map { Gesture(key: $0, assetName: "x") }.sorted { $0.order < $1.order }.map(\.key)
+        #expect(sorted == ["1", "2", "0", "a", "s"], "0 comes after 9, as on the keyboard")
     }
 
     @Test("Every gesture picture loads, and its stick sits where the pointing picture's stick does",
@@ -56,21 +63,24 @@ struct GestureHandsTests {
         #expect(most == 0, "\(name) has a faint background (alpha up to \(most)) where it should be transparent")
     }
 
-    @Test("A gesture picture is the hand's picture name and a slot from 1 to 9, and anything else is ignored")
+    @Test("A gesture picture is the hand's picture name and one letter or digit, and anything else is ignored")
     func parsing() {
-        #expect(Gesture.parse("hand_line_2", hand: "hand_line") == Gesture(slot: 2, assetName: "hand_line_2"))
+        #expect(Gesture.parse("hand_line_s", hand: "hand_line") == Gesture(key: "s", assetName: "hand_line_s"))
+        #expect(Gesture.parse("hand_line_2", hand: "hand_line") == Gesture(key: "2", assetName: "hand_line_2"))
+        #expect(Gesture.parse("hand_line_0", hand: "hand_line")?.key == "0")
+        #expect(Gesture.parse("hand_line_S", hand: "hand_line")?.key == "s", "a capital in the file name is the same key")
         #expect(Gesture.parse("hand_line", hand: "hand_line") == nil)
-        #expect(Gesture.parse("hand_line_0", hand: "hand_line") == nil, "slots start at 1")
-        #expect(Gesture.parse("hand_line_10", hand: "hand_line") == nil, "slots end at 9")
-        #expect(Gesture.parse("hand_line_x", hand: "hand_line") == nil)
-        #expect(Gesture.parse("hand_line_2_shaka", hand: "hand_line") == nil, "gestures have numbers, not names")
-        #expect(Gesture.parse("hand_lineart_1", hand: "hand_line") == nil, "another hand's picture")
+        #expect(Gesture.parse("hand_line_10", hand: "hand_line") == nil, "one character only")
+        #expect(Gesture.parse("hand_line_-", hand: "hand_line") == nil)
+        #expect(Gesture.parse("hand_line_é", hand: "hand_line") == nil, "plain letters only")
+        #expect(Gesture.parse("hand_line_shaka", hand: "hand_line") == nil, "gestures have keys, not names")
+        #expect(Gesture.parse("hand_lineart_s", hand: "hand_line") == nil, "another hand's picture")
     }
 
     @Test("A hand without gestures has none")
     func handWithoutGestures() {
         #expect(PointerStyle.lavender.gestures.isEmpty)
-        #expect(PointerStyle.lavender.gesture(slot: 1) == nil)
+        #expect(PointerStyle.lavender.gesture(key: "s") == nil)
     }
 
     @Test("The hand shows a gesture only if it is one of its own, and drops it when the hand changes")
@@ -79,8 +89,8 @@ struct GestureHandsTests {
         _ = NSApplication.shared
         let view = ArmView(frame: NSRect(x: 0, y: 0, width: 420, height: 560))
         let line = try #require(PointerStyle(rawValue: "line"))
-        // The unlisted ⌃⇧9 shows like any other gesture.
-        let ok = try #require(line.gesture(slot: 9))
+        // The unlisted ⌃⇧M shows like any other gesture.
+        let ok = try #require(line.gesture(key: "m"))
 
         view.setStyle(line)
         view.setGesture(ok)
@@ -99,14 +109,14 @@ struct GestureHandsTests {
     func customHandGesture() throws {
         try TestPictures.withHandsFolder { folder in
             // Source pictures the way a person would bring them: the hand alone, no stick, on transparency.
-            let gestureSource = try TestPictures.handOnly("hand_line_1", to: folder.appendingPathComponent("Surfer.png"))
+            let gestureSource = try TestPictures.handOnly("hand_line_s", to: folder.appendingPathComponent("Surfer.png"))
             let hand = try TestPictures.makeHand(in: folder)
             defer { CustomHands.remove(hand) }
             #expect(hand.gestures.isEmpty)
 
             let gesture = try CustomHands.addGesture(to: hand, from: gestureSource)
-            #expect(gesture.slot == 1)
-            #expect(gesture.assetName == "\(try #require(hand.assetName))_1", "named by slot, not by the file it came from")
+            #expect(gesture.key == "s", "Surfer.png suggests S")
+            #expect(gesture.assetName == "\(try #require(hand.assetName))_s", "named by key, not by the file it came from")
             #expect(hand.gestures == [gesture])
 
             let handName = try #require(hand.assetName)
@@ -119,7 +129,7 @@ struct GestureHandsTests {
             try CustomHands.removeGesture(gesture, from: hand)
             #expect(hand.gestures.isEmpty)
             let left = try FileManager.default.contentsOfDirectory(atPath: folder.appendingPathComponent("Hands").path)
-            #expect(!left.contains { $0.hasSuffix("_1.png") }, "the gesture's picture should be deleted")
+            #expect(!left.contains { $0.hasSuffix("_s.png") }, "the gesture's picture should be deleted")
         }
     }
 }

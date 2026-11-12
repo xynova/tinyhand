@@ -1,23 +1,28 @@
 import AppKit
 
-// A pose a hand can show instead of pointing, while ⌃⇧ and its slot number are held.
-// A hand's gestures come from its picture files: the hand's own picture name, then _<slot>,
-// such as hand_line_2.webp, or custom-1a2b3c4d_1.png for a custom hand. Gestures have numbers,
-// not names: the picture shows what each one is.
+// A pose a hand can show instead of pointing, while ⌃⇧ and its key are held.
+// A hand's gestures come from its picture files: the hand's own picture name, then _<key>, where
+// the key is one letter or digit. hand_line_s.webp is Line art's ⌃⇧S, and custom-1a2b3c4d_2.png
+// is a custom hand's ⌃⇧2. Gestures have keys, not names: the picture shows what each one is.
 struct Gesture: Hashable {
-    static let slots = 1...9
+    /// Every key a gesture can use, in the order gestures are listed: digits, then letters.
+    static let keys: [Character] = Array("1234567890abcdefghijklmnopqrstuvwxyz")
 
-    let slot: Int
+    /// Lower case, as in the file name.
+    let key: Character
     let assetName: String
 
-    var shortcut: String { "⌃⇧\(slot)" }
+    var shortcut: String { "⌃⇧\(key.uppercased())" }
 
-    /// What people and screen readers call it, such as "Gesture 2".
-    var label: String { "Gesture \(slot)" }
+    /// What people and screen readers call it, such as "Gesture S".
+    var label: String { "Gesture \(key.uppercased())" }
+
+    /// Where it comes in lists: digits first, then letters.
+    var order: Int { Gesture.keys.firstIndex(of: key) ?? Gesture.keys.count }
 
     // Stock gestures that work but aren't listed: not counted on the badge, and not in the
-    // tooltip, the toolbar preview or Settings. Line art's ⌃⇧9 is the middle finger.
-    private static let unlisted: Set<String> = ["hand_line_9"]
+    // tooltip, the toolbar preview or Settings. Line art's ⌃⇧M is the middle finger.
+    private static let unlisted: Set<String> = ["hand_line_m"]
 
     /// Whether the badge, the tooltip, the toolbar preview and Settings show this gesture.
     var isListed: Bool { !Gesture.unlisted.contains(assetName) }
@@ -27,11 +32,11 @@ struct Gesture: Hashable {
         guard fileBase.hasPrefix(base + "_") else {
             return nil
         }
-        let rest = fileBase.dropFirst(base.count + 1)
-        guard rest.count == 1, let slot = Int(rest), slots.contains(slot) else {
+        let rest = fileBase.dropFirst(base.count + 1).lowercased()
+        guard rest.count == 1, let key = rest.first, keys.contains(key) else {
             return nil
         }
-        return Gesture(slot: slot, assetName: fileBase)
+        return Gesture(key: key, assetName: fileBase)
     }
 }
 
@@ -46,9 +51,9 @@ enum GestureCatalog {
         if let hit = known[base] {
             return hit
         }
-        // A slot's picture can be in more than one folder, or be both a WebP and a PNG; it is
+        // A key's picture can be in more than one folder, or be both a WebP and a PNG; it is
         // the same gesture, and HandAsset picks which file to load.
-        var bySlot: [Int: Gesture] = [:]
+        var byKey: [Character: Gesture] = [:]
         for folder in HandAsset.pictureFolders(custom: style.isCustom) {
             for file in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] {
                 let url = URL(fileURLWithPath: file)
@@ -56,10 +61,10 @@ enum GestureCatalog {
                       let gesture = Gesture.parse(url.deletingPathExtension().lastPathComponent, hand: base) else {
                     continue
                 }
-                bySlot[gesture.slot] = gesture
+                byKey[gesture.key] = gesture
             }
         }
-        let list = bySlot.keys.sorted().compactMap { bySlot[$0] }
+        let list = byKey.values.sorted { $0.order < $1.order }
         known[base] = list
         return list
     }
@@ -132,7 +137,7 @@ struct PointerStyle: Hashable {
         ("line", "Line art", Ink.hex(0x1D1D21)),
     ]
 
-    /// This hand's gestures, in slot order, including unlisted ones.
+    /// This hand's gestures, digits then letters, including unlisted ones.
     var gestures: [Gesture] {
         GestureCatalog.gestures(for: self)
     }
@@ -142,8 +147,8 @@ struct PointerStyle: Hashable {
         gestures.filter(\.isListed)
     }
 
-    func gesture(slot: Int) -> Gesture? {
-        gestures.first { $0.slot == slot }
+    func gesture(key: Character) -> Gesture? {
+        gestures.first { $0.key == key }
     }
 
     static var builtInHands: [PointerStyle] {

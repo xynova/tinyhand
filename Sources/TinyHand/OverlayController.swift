@@ -30,15 +30,22 @@ final class OverlayController {
     private var escHotKey: UInt32?
     private var gestureHotKeys: [UInt32] = []
 
-    /// Gesture shortcuts: hold ⌃⇧ and the number; the gesture shows only while it is held.
+    /// Gesture shortcuts: hold ⌃⇧ and the gesture's key; the gesture shows only while it is held.
     /// Not ⌥: Option is the default "click for real" key, which hides the hand while held.
     /// Shift only acts when tapped on its own (double-tap for click-through), so holding it
     /// together with ⌃ is free.
     static let gestureModifiers = UInt32(controlKey | shiftKey)
-    // ⌃⇧1 to ⌃⇧9 show whatever the current hand has in that slot.
-    static let gestureKeys: [(slot: Int, keyCode: Int)] = [
-        (1, kVK_ANSI_1), (2, kVK_ANSI_2), (3, kVK_ANSI_3), (4, kVK_ANSI_4), (5, kVK_ANSI_5),
-        (6, kVK_ANSI_6), (7, kVK_ANSI_7), (8, kVK_ANSI_8), (9, kVK_ANSI_9),
+    // The key code for every gesture key, by its place on a US keyboard, as TinyHand's other
+    // shortcuts are.
+    static let gestureKeyCodes: [Character: Int] = [
+        "1": kVK_ANSI_1, "2": kVK_ANSI_2, "3": kVK_ANSI_3, "4": kVK_ANSI_4, "5": kVK_ANSI_5,
+        "6": kVK_ANSI_6, "7": kVK_ANSI_7, "8": kVK_ANSI_8, "9": kVK_ANSI_9, "0": kVK_ANSI_0,
+        "a": kVK_ANSI_A, "b": kVK_ANSI_B, "c": kVK_ANSI_C, "d": kVK_ANSI_D, "e": kVK_ANSI_E,
+        "f": kVK_ANSI_F, "g": kVK_ANSI_G, "h": kVK_ANSI_H, "i": kVK_ANSI_I, "j": kVK_ANSI_J,
+        "k": kVK_ANSI_K, "l": kVK_ANSI_L, "m": kVK_ANSI_M, "n": kVK_ANSI_N, "o": kVK_ANSI_O,
+        "p": kVK_ANSI_P, "q": kVK_ANSI_Q, "r": kVK_ANSI_R, "s": kVK_ANSI_S, "t": kVK_ANSI_T,
+        "u": kVK_ANSI_U, "v": kVK_ANSI_V, "w": kVK_ANSI_W, "x": kVK_ANSI_X, "y": kVK_ANSI_Y,
+        "z": kVK_ANSI_Z,
     ]
     private var lastPermissionCheck = Date.distantPast
 
@@ -146,6 +153,10 @@ final class OverlayController {
         toolbar.select(armView.style)
         tapSound.enabled = soundOn
         toolbar.setSoundOn(soundOn)
+        // Adding or removing one of your own hands' gestures changes which keys the hand needs.
+        NotificationCenter.default.addObserver(forName: CustomHands.changed, object: nil, queue: .main) { [weak self] _ in
+            self?.refreshGestureKeys()
+        }
         NotificationCenter.default.addObserver(forName: Preferences.changed, object: nil, queue: .main) { [weak self] _ in
             self?.syncSound()
             self?.inputTap.interactKey = Preferences.interactKey.cgFlags
@@ -177,6 +188,7 @@ final class OverlayController {
         PointerStyle.saved = armView.style
         toolbar.select(armView.style)
         syncSound()
+        refreshGestureKeys()
     }
 
     private func syncSound() {
@@ -556,19 +568,23 @@ final class OverlayController {
         inputTap.passThroughRects = rects
     }
 
-    // The gesture shortcuts exist only while the hand is on, so they don't take ⌃⇧1-3 from other
-    // apps the rest of the time.
+    // The gesture shortcuts exist only while the hand is on, and only for the keys the current
+    // hand uses, so they take as few ⌃⇧ shortcuts from other apps as they can.
     private func setGestureKeysEnabled(_ enabled: Bool) {
         if enabled && isActive && gestureHotKeys.isEmpty {
-            for key in OverlayController.gestureKeys {
+            for gesture in armView.style.gestures {
+                guard let keyCode = OverlayController.gestureKeyCodes[gesture.key] else {
+                    continue
+                }
+                let key = gesture.key
                 let id = HotKeyCenter.shared.register(
-                    keyCode: UInt32(key.keyCode), modifiers: OverlayController.gestureModifiers,
-                    action: { [weak self] in self?.showGesture(slot: key.slot) },
-                    onRelease: { [weak self] in self?.showGesture(slot: nil) })
+                    keyCode: UInt32(keyCode), modifiers: OverlayController.gestureModifiers,
+                    action: { [weak self] in self?.showGesture(key: key) },
+                    onRelease: { [weak self] in self?.showGesture(key: nil) })
                 if let id = id {
                     gestureHotKeys.append(id)
                 } else {
-                    Log.write("gesture shortcut ⌃⇧\(key.slot) is taken by another app")
+                    Log.write("gesture shortcut \(gesture.shortcut) is taken by another app")
                 }
             }
         }
@@ -579,21 +595,27 @@ final class OverlayController {
         }
     }
 
-    private func showGesture(slot: Int?) {
+    // Picking another hand, or changing your own hand's gestures, changes the keys to register.
+    private func refreshGestureKeys() {
         guard isActive else {
             return
         }
-        let gesture = slot.flatMap { armView.style.gesture(slot: $0) }
+        setGestureKeysEnabled(false)
+        setGestureKeysEnabled(true)
+    }
+
+    private func showGesture(key: Character?) {
+        guard isActive else {
+            return
+        }
+        let gesture = key.flatMap { armView.style.gesture(key: $0) }
         // Key repeat can send the same press again; showing the same gesture again is a no-op.
         guard gesture != armView.gesture else {
-            if let slot = slot, gesture == nil {
-                Log.write("gesture ⌃⇧\(slot) asked for, but \(armView.style.rawValue) has nothing in that slot")
-            }
             return
         }
         armView.setGesture(gesture)
         if let gesture = gesture {
-            Log.write("gesture \(gesture.slot) shown on \(armView.style.rawValue)")
+            Log.write("gesture \(gesture.shortcut) shown on \(armView.style.rawValue)")
         } else {
             Log.write("gesture released, pointing again")
         }

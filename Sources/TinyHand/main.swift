@@ -97,6 +97,25 @@ if let idx = CommandLine.arguments.firstIndex(of: "--make-hand"), CommandLine.ar
     exit(0)
 }
 
+// --key-chooser-test <out>: draws the "Show it with" menu from adding a gesture, as if Shaka.png was picked.
+if let idx = CommandLine.arguments.firstIndex(of: "--key-chooser-test") {
+    _ = NSApplication.shared
+    let out = CommandLine.arguments.count > idx + 1 ? CommandLine.arguments[idx + 1] : "/tmp/key-chooser.png"
+    let chooser = GestureKeyChooser(free: Gesture.keys)
+    chooser.follow(URL(fileURLWithPath: "/x/Shaka.png"))
+    let view = chooser.view
+    view.appearance = NSAppearance(named: .aqua)
+    view.wantsLayer = true
+    view.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+    view.layoutSubtreeIfNeeded()
+    if let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+        view.cacheDisplay(in: view.bounds, to: rep)
+        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: out))
+        print("rendered \(out)")
+    }
+    exit(0)
+}
+
 // --picker-test <out>: draws the hand picker from Settings.
 if let idx = CommandLine.arguments.firstIndex(of: "--picker-test") {
     _ = NSApplication.shared
@@ -110,7 +129,7 @@ if let idx = CommandLine.arguments.firstIndex(of: "--picker-test") {
 }
 
 // --make-gesture <hand picture> <gesture source> <out>: puts a gesture on a hand's own stick,
-// the same way Settings does for your own hands. Name the result <hand>_<slot>.
+// the same way Settings does for your own hands. Name the result <hand>_<key>, such as hand_line_s.
 if let idx = CommandLine.arguments.firstIndex(of: "--make-gesture"), CommandLine.arguments.count > idx + 3 {
     let hand = URL(fileURLWithPath: CommandLine.arguments[idx + 1])
     let source = URL(fileURLWithPath: CommandLine.arguments[idx + 2])

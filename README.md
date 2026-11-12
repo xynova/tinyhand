@@ -28,7 +28,7 @@ Open `TinyHand.dmg`, drag TinyHand to Applications and allow **Accessibility** w
 | Click | Tap (nothing underneath gets clicked) |
 | Hold and drag | Draw on the screen |
 | Hold **⌘** while drawing | Add an arrowhead to the end of the line |
-| Hold **⌃⇧** and a number, **1** to **9** | Show that gesture while held, on hands that have gestures. Line art has a shaka (1) and an OK (2). Settings › Pointers › Gestures lists them and adds gestures to your own hands |
+| Hold **⌃⇧** and a gesture's key | Show that gesture while held, on hands that have gestures. Line art has a shaka (**S**) and an OK (**O**). Settings › Pointers › Gestures adds gestures to your own hands, on the key you pick |
 | **⌃⌥X** | Clear the drawing |
 | **Esc** | Clear everything and turn the pointer off |
 
@@ -75,13 +75,13 @@ scripts/preview.sh install     # builds "TinyHand Preview" into dist/ and opens 
 scripts/preview.sh uninstall   # removes it, its settings and its Accessibility permission
 ```
 
-A hand's gestures are pictures named after the hand, then a slot from 1 to 9:
-`hand_line_2.webp` is Line art's second gesture, shown with ⌃⇧2. Gestures have numbers, not
-names: the picture shows what each one is. To make one from a picture of the gesture on a
-transparent background, sitting on the hand's own stick:
+A hand's gestures are pictures named after the hand, then one letter or digit, which is the
+gesture's key: `hand_line_s.webp` is Line art's ⌃⇧S. Gestures have keys, not names: the picture
+shows what each one is. To make one from a picture of the gesture on a transparent background,
+sitting on the hand's own stick:
 
 ```sh
-swift build && .build/debug/TinyHand --make-gesture assets/hand_line.webp shaka.png assets/hand_line_2.png
+swift build && .build/debug/TinyHand --make-gesture assets/hand_line.webp shaka.png assets/hand_line_s.png
 ```
 
 The preview has its own name and settings, can't update itself, and leaves `tinyhand://`
