@@ -400,7 +400,7 @@ final class Toolbar {
 
     private func showGesturePreview(_ style: PointerStyle, over button: NSView) {
         hideGesturePreview()
-        let gestures = style.listedGestures
+        let gestures = style.gestures
         guard !gestures.isEmpty else {
             return
         }
@@ -434,17 +434,20 @@ final class Toolbar {
         stackAll.orientation = .vertical
         stackAll.alignment = .leading
         stackAll.spacing = 8
-        stackAll.edgeInsets = NSEdgeInsets(top: 10, left: 14, bottom: 12, right: 14)
         stackAll.translatesAutoresizingMaskIntoConstraints = false
         bg.addSubview(stackAll)
+        // The padding is set here rather than as the stack's edge insets: the stack left its
+        // right inset out of its fitting size, so the last picture touched the panel's edge.
+        let pad = NSEdgeInsets(top: 10, left: 14, bottom: 12, right: 14)
+        let content = stackAll.fittingSize
         NSLayoutConstraint.activate([
-            stackAll.leadingAnchor.constraint(equalTo: bg.leadingAnchor),
-            stackAll.trailingAnchor.constraint(equalTo: bg.trailingAnchor),
-            stackAll.topAnchor.constraint(equalTo: bg.topAnchor),
-            stackAll.bottomAnchor.constraint(equalTo: bg.bottomAnchor),
+            stackAll.leadingAnchor.constraint(equalTo: bg.leadingAnchor, constant: pad.left),
+            stackAll.topAnchor.constraint(equalTo: bg.topAnchor, constant: pad.top),
+            stackAll.widthAnchor.constraint(equalToConstant: content.width),
+            stackAll.heightAnchor.constraint(equalToConstant: content.height),
         ])
-        stackAll.layoutSubtreeIfNeeded()
-        p.setContentSize(stackAll.fittingSize)
+        p.setContentSize(NSSize(width: pad.left + content.width + pad.right,
+                                height: pad.top + content.height + pad.bottom))
 
         // Above the hand's button, kept over the toolbar.
         var midX = panel.frame.midX
@@ -655,6 +658,9 @@ final class Toolbar {
 // without a person hovering or clicking.
 extension Toolbar {
     var isPreviewingGestures: Bool { preview != nil }
+
+    /// The preview panel's size, in points.
+    var gesturePreviewSize: CGSize? { preview?.frame.size }
 
     /// The keys of the gestures the preview shows.
     var gesturesInPreview: [Character] { previewedKeys }

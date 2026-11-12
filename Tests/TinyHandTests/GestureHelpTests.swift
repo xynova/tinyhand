@@ -14,14 +14,14 @@ struct GestureHelpTests {
 
     @Test("The badge shows how many gestures a hand has, and only on hands that have some")
     func badge() throws {
-        #expect(GestureHelp.badge(for: try line) == "2", "the unlisted ⌃⇧M isn't counted")
+        #expect(GestureHelp.badge(for: try line) == "3")
         #expect(GestureHelp.badge(for: .lavender) == nil)
         #expect(GestureHelp.badge(for: .laser) == nil)
     }
 
     @Test("The hover text lists each gesture's shortcut")
     func summary() throws {
-        #expect(GestureHelp.summary(for: try line) == "Line art. Gestures: ⌃⇧O, ⌃⇧S", "the unlisted ⌃⇧M isn't listed")
+        #expect(GestureHelp.summary(for: try line) == "Line art. Gestures: ⌃⇧M, ⌃⇧O, ⌃⇧S")
         #expect(GestureHelp.summary(for: .lavender) == "Lavender toy")
     }
 
@@ -56,14 +56,17 @@ struct GestureHelpTests {
         let bar = Toolbar()
         let line = try line
         bar.select(line)
-        #expect(bar.badgeText(of: line) == "2")
+        #expect(bar.badgeText(of: line) == "3")
         #expect(bar.tooltip(of: line) == GestureHelp.summary(for: line))
 
         bar.previewGestures(of: line)
         #expect(bar.isPreviewingGestures)
-        #expect(bar.gesturesInPreview == ["o", "s"], "the unlisted ⌃⇧M isn't previewed")
+        #expect(bar.gesturesInPreview == ["m", "o", "s"])
         let preview = try #require(bar.snapshotGesturePreview())
         #expect(preview.pixelsWide > 100 && preview.pixelsHigh > 60)
+        // Three 52-point pictures, 10 points apart, with 14 points of padding on each side.
+        let expectedWidth: CGFloat = 3 * 52 + 2 * 10 + 2 * 14
+        #expect(bar.gesturePreviewSize?.width == expectedWidth, "the preview needs its padding on both sides")
         bar.hideGesturePreview()
         #expect(!bar.isPreviewingGestures)
 
@@ -71,6 +74,19 @@ struct GestureHelpTests {
         #expect(bar.badgeText(of: .lavender) == nil)
         bar.previewGestures(of: .lavender)
         #expect(!bar.isPreviewingGestures, "a hand without gestures has nothing to preview")
+    }
+
+    @Test("In the hand picker, hovering a hand with gestures previews them without changing the picker's size")
+    @MainActor
+    func pickerPreview() throws {
+        _ = NSApplication.shared
+        let plain = try #require(snapshotPointerPicker())
+        let hoverLine = try #require(snapshotPointerPicker(hovered: try line))
+        let hoverLavender = try #require(snapshotPointerPicker(hovered: .lavender))
+        #expect(hoverLine.pixelsWide == plain.pixelsWide && hoverLine.pixelsHigh == plain.pixelsHigh,
+                "the preview floats: the picker keeps its size, so nothing moves under the mouse")
+        #expect(hoverLine.tiffRepresentation != plain.tiffRepresentation, "the preview card should show")
+        #expect(hoverLavender.tiffRepresentation == plain.tiffRepresentation, "no preview for a hand without gestures")
     }
 }
 

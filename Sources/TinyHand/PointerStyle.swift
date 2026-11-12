@@ -20,13 +20,6 @@ struct Gesture: Hashable {
     /// Where it comes in lists: digits first, then letters.
     var order: Int { Gesture.keys.firstIndex(of: key) ?? Gesture.keys.count }
 
-    // Stock gestures that work but aren't listed: not counted on the badge, and not in the
-    // tooltip, the toolbar preview or Settings. Line art's ⌃⇧M is the middle finger.
-    private static let unlisted: Set<String> = ["hand_line_m"]
-
-    /// Whether the badge, the tooltip, the toolbar preview and Settings show this gesture.
-    var isListed: Bool { !Gesture.unlisted.contains(assetName) }
-
     /// Reads a gesture from a picture name, given the hand's own picture name.
     static func parse(_ fileBase: String, hand base: String) -> Gesture? {
         guard fileBase.hasPrefix(base + "_") else {
@@ -137,14 +130,9 @@ struct PointerStyle: Hashable {
         ("line", "Line art", Ink.hex(0x1D1D21)),
     ]
 
-    /// This hand's gestures, digits then letters, including unlisted ones.
+    /// This hand's gestures, digits then letters.
     var gestures: [Gesture] {
         GestureCatalog.gestures(for: self)
-    }
-
-    /// The gestures people are shown: all of them except unlisted ones.
-    var listedGestures: [Gesture] {
-        gestures.filter(\.isListed)
     }
 
     func gesture(key: Character) -> Gesture? {
@@ -309,8 +297,9 @@ struct HandAsset {
         let side = max(handW, handH) * 1.06
         let cx = (handMinX + handMaxX) / 2 * w
         let cy = (handTop + wrist) / 2 * h
-        let rect = CGRect(x: cx - side / 2, y: cy - side / 2, width: side, height: side)
-            .intersection(CGRect(x: 0, y: 0, width: w, height: h))
+        let square = CGRect(x: cx - side / 2, y: cy - side / 2, width: side, height: side)
+        // A hand near the picture's edge cuts the square short; that part stays transparent.
+        let rect = square.intersection(CGRect(x: 0, y: 0, width: w, height: h))
         let cropped = image.cropping(to: rect) ?? image
         let px = 128
         guard let ctx = CGContext(data: nil, width: px, height: px, bitsPerComponent: 8, bytesPerRow: 0,
@@ -319,7 +308,12 @@ struct HandAsset {
             return NSImage(cgImage: cropped, size: NSSize(width: 64, height: 64))
         }
         ctx.interpolationQuality = .high
-        ctx.draw(cropped, in: CGRect(x: 0, y: 0, width: px, height: px))
+        // Where the cut part sits in the square. Pictures count rows from the top, the context
+        // from the bottom.
+        let scale = CGFloat(px) / side
+        ctx.draw(cropped, in: CGRect(x: (rect.minX - square.minX) * scale,
+                                     y: (square.maxY - rect.maxY) * scale,
+                                     width: rect.width * scale, height: rect.height * scale))
         guard let small = ctx.makeImage() else {
             return NSImage(cgImage: cropped, size: NSSize(width: 64, height: 64))
         }

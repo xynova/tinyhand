@@ -116,12 +116,13 @@ if let idx = CommandLine.arguments.firstIndex(of: "--key-chooser-test") {
     exit(0)
 }
 
-// --picker-test <out>: draws the hand picker from Settings.
+// --picker-test <out> [hovered id]: draws the hand picker from Settings, optionally with a hand hovered.
 if let idx = CommandLine.arguments.firstIndex(of: "--picker-test") {
     _ = NSApplication.shared
     let out = CommandLine.arguments.count > idx + 1 ? CommandLine.arguments[idx + 1] : "/tmp/picker.png"
+    let hovered = CommandLine.arguments.count > idx + 2 ? PointerStyle(rawValue: CommandLine.arguments[idx + 2]) : nil
     let dark = ProcessInfo.processInfo.environment["TH_DARK"] != nil
-    if let data = snapshotPointerPicker(dark: dark)?.representation(using: .png, properties: [:]) {
+    if let data = snapshotPointerPicker(hovered: hovered, dark: dark)?.representation(using: .png, properties: [:]) {
         try? data.write(to: URL(fileURLWithPath: out))
         print("rendered \(out)")
     }

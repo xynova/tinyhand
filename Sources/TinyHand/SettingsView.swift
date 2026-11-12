@@ -722,21 +722,47 @@ private struct GestureBadge: View {
 private struct PointerPicker: View {
     @ObservedObject var model: SettingsModel
     let done: () -> Void
+    @State private var hovered: PointerStyle?
     private let columns = [GridItem(.adaptive(minimum: 64, maximum: 72), spacing: 4)]
+
+    init(model: SettingsModel, hovered: PointerStyle? = nil, done: @escaping () -> Void) {
+        self.model = model
+        self.done = done
+        _hovered = State(initialValue: hovered)
+    }
 
     var body: some View {
         let pinned = Set(Preferences.pinnedStyles)
         VStack(alignment: .leading, spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    section(nil, PointerStyle.builtInHands + [.laser], pinned)
-                    if !PointerStyle.customHands.isEmpty {
-                        section("Your hands", PointerStyle.customHands, pinned)
+            ScrollViewReader { scroller in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        section(nil, PointerStyle.builtInHands + [.laser], pinned)
+                        if !PointerStyle.customHands.isEmpty {
+                            section("Your hands", PointerStyle.customHands, pinned)
+                        }
+                    }
+                    .padding(12)
+                }
+                // Only the render test opens the picker with a hand already hovered.
+                .onAppear {
+                    if let hand = hovered {
+                        scroller.scrollTo(hand, anchor: .center)
                     }
                 }
-                .padding(12)
             }
             .frame(height: 340)
+            // Hovering a hand with gestures shows them in a card over the grid. The card floats,
+            // so the picker keeps its size and nothing moves under the mouse.
+            .overlayPreferenceValue(PickerCellBounds.self) { cells in
+                GeometryReader { proxy in
+                    if let hand = hovered, !hand.gestures.isEmpty, let cell = cells[hand] {
+                        GesturePreviewCard(style: hand)
+                            .position(GesturePreviewCard.center(for: hand, cell: proxy[cell], in: proxy.size))
+                    }
+                }
+                .allowsHitTesting(false)
+            }
             Divider()
             Button {
                 done()
@@ -765,13 +791,20 @@ private struct PointerPicker: View {
             }
             LazyVGrid(columns: columns, spacing: 4) {
                 ForEach(styles, id: \.self) { style in
-                    PickerCell(style: style, added: pinned.contains(style)) {
+                    PickerCell(style: style, added: pinned.contains(style), onHover: { inside in
+                        if inside {
+                            hovered = style
+                        } else if hovered == style {
+                            hovered = nil
+                        }
+                    }) {
                         guard !pinned.contains(style) else {
                             return
                         }
                         model.pin(style)
                         done()
                     }
+                    .id(style)
                 }
             }
         }
@@ -781,6 +814,7 @@ private struct PointerPicker: View {
 private struct PickerCell: View {
     let style: PointerStyle
     let added: Bool
+    let onHover: (Bool) -> Void
     let action: () -> Void
     @State private var hovering = false
 
@@ -804,9 +838,75 @@ private struct PickerCell: View {
         }
         .buttonStyle(.plain)
         .focusable(false)
-        .help(added ? "\(style.title) is already in the toolbar" : GestureHelp.summary(for: style))
+        .help(added ? "\(style.title) is already in the toolbar" : style.title)
         .accessibilityLabel(GestureHelp.summary(for: style))
-        .onHover { hovering = $0 }
+        .anchorPreference(key: PickerCellBounds.self, value: .bounds) { [style: $0] }
+        .onHover {
+            hovering = $0
+            onHover($0)
+        }
+    }
+}
+
+// Where each hand's cell is in the picker, so the gesture preview can sit next to the hovered one.
+private struct PickerCellBounds: PreferenceKey {
+    static var defaultValue: [PointerStyle: Anchor<CGRect>] = [:]
+
+    static func reduce(value: inout [PointerStyle: Anchor<CGRect>], nextValue: () -> [PointerStyle: Anchor<CGRect>]) {
+        value.merge(nextValue()) { $1 }
+    }
+}
+
+// The card the hand picker shows over a hovered hand that has gestures: each one's picture and
+// shortcut. It has a fixed size so it can be placed before it is drawn.
+private struct GesturePreviewCard: View {
+    let style: PointerStyle
+
+    private static let tile: CGFloat = 52
+    private static let spacing: CGFloat = 8
+    private static let height: CGFloat = 100
+
+    static func width(for style: PointerStyle) -> CGFloat {
+        let count = CGFloat(style.gestures.count)
+        return max(160, count * tile + (count - 1) * spacing + 28)
+    }
+
+    /// Above the hovered cell, or below it when there's no room above, kept inside the picker.
+    static func center(for style: PointerStyle, cell: CGRect, in size: CGSize) -> CGPoint {
+        let w = width(for: style), h = height
+        let x = min(max(cell.midX, w / 2 + 6), size.width - w / 2 - 6)
+        var y = cell.minY - h / 2 - 4
+        if y - h / 2 < 4 {
+            y = cell.maxY + h / 2 + 4
+        }
+        y = min(max(y, h / 2 + 4), size.height - h / 2 - 4)
+        return CGPoint(x: x, y: y)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("\(style.title) gestures").font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
+            HStack(spacing: Self.spacing) {
+                ForEach(style.gestures, id: \.self) { gesture in
+                    VStack(spacing: 3) {
+                        if let icon = HandAsset.thumbnail(gesture.assetName) {
+                            Image(nsImage: icon).resizable().interpolation(.high).frame(width: 40, height: 40)
+                        }
+                        Text(gesture.shortcut)
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(width: Self.tile)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(width: Self.width(for: style), height: Self.height, alignment: .topLeading)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color(nsColor: .windowBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.1)))
+        .shadow(color: .black.opacity(0.2), radius: 10, y: 4)
+        .accessibilityHidden(true)
     }
 }
 
@@ -857,11 +957,11 @@ private struct GestureHandRow: View {
                     TextButton(title: "Add gesture…") { model.chooseGestureFile(for: hand) }
                 }
             }
-            if hand.listedGestures.isEmpty {
+            if hand.gestures.isEmpty {
                 Text("No gestures yet.").font(.system(size: 11)).foregroundColor(.secondary)
             } else {
                 HStack(spacing: 8) {
-                    ForEach(hand.listedGestures, id: \.self) { gesture in
+                    ForEach(hand.gestures, id: \.self) { gesture in
                         GestureTile(gesture: gesture, removable: hand.isCustom) {
                             model.removeGesture(gesture, from: hand)
                         }
@@ -1787,17 +1887,26 @@ final class GestureKeyChooser: NSObject, NSOpenSavePanelDelegate {
 
 // MARK: - Test and render-test hooks
 
-/// Draws the hand picker on its own. Called by `--picker-test`.
-func snapshotPointerPicker(dark: Bool = false) -> NSBitmapImageRep? {
+/// Draws the hand picker on its own, optionally with a hand hovered.
+/// Called by `--picker-test` and by GestureHelpTests.
+func snapshotPointerPicker(hovered: PointerStyle? = nil, dark: Bool = false) -> NSBitmapImageRep? {
     let names = PointerStyle.allCases.compactMap(\.assetName)
     for name in names {
         _ = HandAsset.thumbnail(name)
     }
-    let view = NSHostingView(rootView: PointerPicker(model: SettingsModel()) {}
+    let view = NSHostingView(rootView: PointerPicker(model: SettingsModel(), hovered: hovered) {}
         .background(Color(nsColor: .windowBackgroundColor)))
     view.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
     view.frame = CGRect(origin: .zero, size: view.fittingSize)
+    // In an offscreen window, with a moment on the run loop, so a hovered hand is scrolled into
+    // view and its preview placed before the picture is taken.
+    let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+    window.contentView = view
     view.layoutSubtreeIfNeeded()
+    if hovered != nil {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        view.layoutSubtreeIfNeeded()
+    }
     guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
         return nil
     }

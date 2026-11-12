@@ -28,7 +28,7 @@ Open `TinyHand.dmg`, drag TinyHand to Applications and allow **Accessibility** w
 | Click | Tap (nothing underneath gets clicked) |
 | Hold and drag | Draw on the screen |
 | Hold **⌘** while drawing | Add an arrowhead to the end of the line |
-| Hold **⌃⇧** and a gesture's key | Show that gesture while held, on hands that have gestures. Line art has a shaka (**S**) and an OK (**O**). Settings › Pointers › Gestures adds gestures to your own hands, on the key you pick |
+| Hold **⌃⇧** and a gesture's key | Show that gesture while held, on hands that have gestures. Line art has a middle finger (**M**), an OK (**O**) and a shaka (**S**). Settings › Pointers › Gestures adds gestures to your own hands, on the key you pick |
 | **⌃⌥X** | Clear the drawing |
 | **Esc** | Clear everything and turn the pointer off |
 

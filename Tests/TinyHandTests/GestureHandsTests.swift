@@ -16,12 +16,11 @@ let allHandGestures: [HandGesture] = PointerStyle.builtInHands.flatMap { style i
 // HandAsset keeps a small static cache with no lock, so these cases run one at a time.
 @Suite("Gesture hands", .serialized)
 struct GestureHandsTests {
-    @Test("Line art has gestures on S, O and M, and lists only S and O")
+    @Test("Line art has gestures on M, O and S")
     func lineArtKeys() throws {
         let line = try #require(PointerStyle(rawValue: "line"))
         #expect(Set(line.gestures.map(\.assetName)) == ["hand_line_s", "hand_line_o", "hand_line_m"])
         #expect(line.gestures.map(\.key) == ["m", "o", "s"], "listed digits first, then letters in order")
-        #expect(line.listedGestures.map(\.key) == ["o", "s"], "⌃⇧M works but isn't shown")
         #expect(line.gesture(key: "s")?.label == "Gesture S")
         #expect(line.gesture(key: "s")?.shortcut == "⌃⇧S")
         #expect(line.gesture(key: "x") == nil)
@@ -63,6 +62,23 @@ struct GestureHandsTests {
         #expect(most == 0, "\(name) has a faint background (alpha up to \(most)) where it should be transparent")
     }
 
+    @Test("Every gesture's thumbnail has a clear margin at the top and both sides", arguments: allHandGestures)
+    func thumbnailMargin(_ item: HandGesture) throws {
+        let thumb = try #require(HandAsset.thumbnail(item.gesture.assetName))
+        let image = try #require(thumb.cgImage(forProposedRect: nil, context: nil, hints: nil))
+        let px = try TestPictures.pixels(image)
+        let w = image.width, h = image.height
+        // The bottom isn't checked: the stick runs off it on purpose.
+        var edge: UInt8 = 0
+        for i in 0..<w {
+            edge = max(edge, px[i * 4 + 3])
+        }
+        for i in 0..<h {
+            edge = max(edge, px[(i * w) * 4 + 3], px[(i * w + w - 1) * 4 + 3])
+        }
+        #expect(edge == 0, "\(item.gesture.assetName)'s thumbnail touches its edge (alpha \(edge))")
+    }
+
     @Test("A gesture picture is the hand's picture name and one letter or digit, and anything else is ignored")
     func parsing() {
         #expect(Gesture.parse("hand_line_s", hand: "hand_line") == Gesture(key: "s", assetName: "hand_line_s"))
@@ -89,7 +105,6 @@ struct GestureHandsTests {
         _ = NSApplication.shared
         let view = ArmView(frame: NSRect(x: 0, y: 0, width: 420, height: 560))
         let line = try #require(PointerStyle(rawValue: "line"))
-        // The unlisted ⌃⇧M shows like any other gesture.
         let ok = try #require(line.gesture(key: "m"))
 
         view.setStyle(line)
