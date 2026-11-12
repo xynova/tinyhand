@@ -70,17 +70,6 @@ struct GestureHelpTests {
         bar.previewGestures(of: .lavender)
         #expect(!bar.isPreviewingGestures, "a hand without gestures has nothing to preview")
     }
-
-    @Test("In the hand picker, hovering a hand with gestures shows them, and other hands don't")
-    @MainActor
-    func pickerPreview() throws {
-        _ = NSApplication.shared
-        let plain = try #require(snapshotPointerPicker(hovered: nil))
-        let hoverLine = try #require(snapshotPointerPicker(hovered: try line))
-        let hoverLavender = try #require(snapshotPointerPicker(hovered: .lavender))
-        #expect(hoverLine.pixelsHigh > plain.pixelsHigh, "the gesture strip should appear under the picker")
-        #expect(hoverLavender.pixelsHigh == plain.pixelsHigh, "no strip for a hand without gestures")
-    }
 }
 
 // Adding gestures to your own hands, in a throwaway hands folder.

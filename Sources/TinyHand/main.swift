@@ -97,13 +97,12 @@ if let idx = CommandLine.arguments.firstIndex(of: "--make-hand"), CommandLine.ar
     exit(0)
 }
 
-// --picker-test <out> [hovered id]: draws the hand picker from Settings, optionally with a hand hovered.
+// --picker-test <out>: draws the hand picker from Settings.
 if let idx = CommandLine.arguments.firstIndex(of: "--picker-test") {
     _ = NSApplication.shared
     let out = CommandLine.arguments.count > idx + 1 ? CommandLine.arguments[idx + 1] : "/tmp/picker.png"
-    let hovered = CommandLine.arguments.count > idx + 2 ? PointerStyle(rawValue: CommandLine.arguments[idx + 2]) : nil
     let dark = ProcessInfo.processInfo.environment["TH_DARK"] != nil
-    if let data = snapshotPointerPicker(hovered: hovered, dark: dark)?.representation(using: .png, properties: [:]) {
+    if let data = snapshotPointerPicker(dark: dark)?.representation(using: .png, properties: [:]) {
         try? data.write(to: URL(fileURLWithPath: out))
         print("rendered \(out)")
     }
@@ -111,7 +110,7 @@ if let idx = CommandLine.arguments.firstIndex(of: "--picker-test") {
 }
 
 // --make-gesture <hand picture> <gesture source> <out>: puts a gesture on a hand's own stick,
-// the same way Settings does for your own hands. Name the result <hand>_<slot>_<name>.
+// the same way Settings does for your own hands. Name the result <hand>_<slot>.
 if let idx = CommandLine.arguments.firstIndex(of: "--make-gesture"), CommandLine.arguments.count > idx + 3 {
     let hand = URL(fileURLWithPath: CommandLine.arguments[idx + 1])
     let source = URL(fileURLWithPath: CommandLine.arguments[idx + 2])

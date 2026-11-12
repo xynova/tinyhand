@@ -709,43 +709,10 @@ private struct GestureBadge: View {
     }
 }
 
-// A hand's gestures in a row: picture and shortcut. Used under the hand picker on hover.
-private struct GestureStrip: View {
-    let style: PointerStyle
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("\(style.title) gestures").font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
-            HStack(spacing: 10) {
-                ForEach(style.gestures, id: \.self) { gesture in
-                    VStack(spacing: 2) {
-                        if let icon = HandAsset.thumbnail(gesture.assetName) {
-                            Image(nsImage: icon).resizable().interpolation(.high).frame(width: 36, height: 36)
-                        }
-                        Text(gesture.shortcut).font(.system(size: 10, weight: .semibold, design: .rounded)).foregroundColor(.secondary)
-                    }
-                    .frame(width: 52)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("\(gesture.label), \(gesture.shortcut)")
-                }
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-    }
-}
-
 private struct PointerPicker: View {
     @ObservedObject var model: SettingsModel
     let done: () -> Void
-    @State private var hovered: PointerStyle?
     private let columns = [GridItem(.adaptive(minimum: 64, maximum: 72), spacing: 4)]
-
-    init(model: SettingsModel, hovered: PointerStyle? = nil, done: @escaping () -> Void) {
-        self.model = model
-        self.done = done
-        _hovered = State(initialValue: hovered)
-    }
 
     var body: some View {
         let pinned = Set(Preferences.pinnedStyles)
@@ -760,11 +727,6 @@ private struct PointerPicker: View {
                 .padding(12)
             }
             .frame(height: 340)
-            // Hovering a hand with gestures previews them here.
-            if let hand = hovered, !hand.gestures.isEmpty {
-                Divider()
-                GestureStrip(style: hand)
-            }
             Divider()
             Button {
                 done()
@@ -793,13 +755,7 @@ private struct PointerPicker: View {
             }
             LazyVGrid(columns: columns, spacing: 4) {
                 ForEach(styles, id: \.self) { style in
-                    PickerCell(style: style, added: pinned.contains(style), onHover: { inside in
-                        if inside {
-                            hovered = style
-                        } else if hovered == style {
-                            hovered = nil
-                        }
-                    }) {
+                    PickerCell(style: style, added: pinned.contains(style)) {
                         guard !pinned.contains(style) else {
                             return
                         }
@@ -815,7 +771,6 @@ private struct PointerPicker: View {
 private struct PickerCell: View {
     let style: PointerStyle
     let added: Bool
-    var onHover: (Bool) -> Void = { _ in }
     let action: () -> Void
     @State private var hovering = false
 
@@ -841,14 +796,11 @@ private struct PickerCell: View {
         .focusable(false)
         .help(added ? "\(style.title) is already in the toolbar" : GestureHelp.summary(for: style))
         .accessibilityLabel(GestureHelp.summary(for: style))
-        .onHover {
-            hovering = $0
-            onHover($0)
-        }
+        .onHover { hovering = $0 }
     }
 }
 
-// Each hand that has gestures, with its gestures: picture, name and shortcut.
+// Each hand that has gestures, with its gestures: picture and shortcut.
 // Your own hands are listed too, with a button to add gestures to them.
 private struct GesturesCard: View {
     @ObservedObject var model: SettingsModel
@@ -1763,14 +1715,13 @@ private let blankIcon = NSImage(size: NSSize(width: 64, height: 64))
 
 // MARK: - Test and render-test hooks
 
-/// Draws the hand picker on its own, optionally with a hand hovered.
-/// Called by `--picker-test` and by GestureHelpTests.
-func snapshotPointerPicker(hovered: PointerStyle?, dark: Bool = false) -> NSBitmapImageRep? {
+/// Draws the hand picker on its own. Called by `--picker-test`.
+func snapshotPointerPicker(dark: Bool = false) -> NSBitmapImageRep? {
     let names = PointerStyle.allCases.compactMap(\.assetName)
     for name in names {
         _ = HandAsset.thumbnail(name)
     }
-    let view = NSHostingView(rootView: PointerPicker(model: SettingsModel(), hovered: hovered) {}
+    let view = NSHostingView(rootView: PointerPicker(model: SettingsModel()) {}
         .background(Color(nsColor: .windowBackgroundColor)))
     view.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
     view.frame = CGRect(origin: .zero, size: view.fittingSize)
