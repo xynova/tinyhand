@@ -76,17 +76,30 @@ struct GestureHelpTests {
         #expect(!bar.isPreviewingGestures, "a hand without gestures has nothing to preview")
     }
 
-    @Test("In the hand picker, hovering a hand with gestures previews them without changing the picker's size")
+    @Test("In the hand picker, hovering a hand doesn't change the picker's size")
     @MainActor
-    func pickerPreview() throws {
+    func pickerKeepsSize() throws {
         _ = NSApplication.shared
         let plain = try #require(snapshotPointerPicker())
         let hoverLine = try #require(snapshotPointerPicker(hovered: try line))
-        let hoverLavender = try #require(snapshotPointerPicker(hovered: .lavender))
         #expect(hoverLine.pixelsWide == plain.pixelsWide && hoverLine.pixelsHigh == plain.pixelsHigh,
                 "the preview floats: the picker keeps its size, so nothing moves under the mouse")
-        #expect(hoverLine.tiffRepresentation != plain.tiffRepresentation, "the preview card should show")
-        #expect(hoverLavender.tiffRepresentation == plain.tiffRepresentation, "no preview for a hand without gestures")
+    }
+
+    @Test("The picker's preview card shows only for hands with gestures, and sits above the hand when there's room")
+    func pickerCardPlacement() throws {
+        let line = try line
+        #expect(GesturePreviewCard.shows(for: line))
+        #expect(!GesturePreviewCard.shows(for: .lavender))
+
+        let picker = CGSize(width: 400, height: 340)
+        let width = GesturePreviewCard.width(for: line)
+        let low = GesturePreviewCard.center(for: line, cell: CGRect(x: 100, y: 250, width: 62, height: 58), in: picker)
+        #expect(low.y < 250, "above a hand low in the grid")
+        let high = GesturePreviewCard.center(for: line, cell: CGRect(x: 100, y: 10, width: 62, height: 58), in: picker)
+        #expect(high.y > 68, "below a hand in the top row, where there's no room above")
+        let edge = GesturePreviewCard.center(for: line, cell: CGRect(x: 330, y: 250, width: 62, height: 58), in: picker)
+        #expect(edge.x + width / 2 <= picker.width, "kept inside the picker at the right edge")
     }
 }
 

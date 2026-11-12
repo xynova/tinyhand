@@ -756,7 +756,7 @@ private struct PointerPicker: View {
             // so the picker keeps its size and nothing moves under the mouse.
             .overlayPreferenceValue(PickerCellBounds.self) { cells in
                 GeometryReader { proxy in
-                    if let hand = hovered, !hand.gestures.isEmpty, let cell = cells[hand] {
+                    if let hand = hovered, GesturePreviewCard.shows(for: hand), let cell = cells[hand] {
                         GesturePreviewCard(style: hand)
                             .position(GesturePreviewCard.center(for: hand, cell: proxy[cell], in: proxy.size))
                     }
@@ -859,8 +859,13 @@ private struct PickerCellBounds: PreferenceKey {
 
 // The card the hand picker shows over a hovered hand that has gestures: each one's picture and
 // shortcut. It has a fixed size so it can be placed before it is drawn.
-private struct GesturePreviewCard: View {
+struct GesturePreviewCard: View {
     let style: PointerStyle
+
+    /// Only hands with gestures get a card.
+    static func shows(for style: PointerStyle) -> Bool {
+        !style.gestures.isEmpty
+    }
 
     private static let tile: CGFloat = 52
     private static let spacing: CGFloat = 8
