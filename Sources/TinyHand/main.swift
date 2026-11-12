@@ -20,7 +20,10 @@ if let idx = CommandLine.arguments.firstIndex(of: "--ax-status") {
 if let idx = CommandLine.arguments.firstIndex(of: "--toolbar-test") {
     _ = NSApplication.shared
     let bar = Toolbar()
-    bar.select(.lavender)
+    // --select <id> puts that hand on the toolbar (and selects it); default lavender.
+    let selected = CommandLine.arguments.firstIndex(of: "--select")
+        .flatMap { CommandLine.arguments.count > $0 + 1 ? PointerStyle(rawValue: CommandLine.arguments[$0 + 1]) : nil }
+    bar.select(selected ?? .lavender)
     bar.setNeedsPermission(CommandLine.arguments.contains("--needs-permission"))
     let out = CommandLine.arguments.count > idx + 1 ? CommandLine.arguments[idx + 1] : "/tmp/toolbar.png"
     if let data = bar.snapshot()?.representation(using: .png, properties: [:]) {
@@ -34,6 +37,12 @@ if let idx = CommandLine.arguments.firstIndex(of: "--toolbar-test") {
             try? data.write(to: URL(fileURLWithPath: hintOut))
             print("rendered \(hintOut)")
         }
+    }
+    // --preview: the gesture preview shown when hovering the selected hand.
+    if CommandLine.arguments.contains("--preview"), let style = selected {
+        bar.previewGestures(of: style)
+        RenderTest.save(bar.snapshotGesturePreview()?.representation(using: .png, properties: [:]),
+                        to: out.replacingOccurrences(of: ".png", with: "-preview.png"))
     }
     if CommandLine.arguments.contains("--ink"), let data = bar.snapshotInkTray()?.representation(using: .png, properties: [:]) {
         let trayOut = out.replacingOccurrences(of: ".png", with: "-ink.png")
@@ -75,6 +84,58 @@ if let idx = CommandLine.arguments.firstIndex(of: "--make-hand"), CommandLine.ar
         let made = try HandMaker.make(from: input)
         try HandMaker.write(made.image, to: output)
         print(String(format: "ok %06X", made.ink))
+    } catch let problem as HandMaker.Problem {
+        print("rejected: \(problem.message)")
+        exit(1)
+    } catch {
+        print("failed: \(error)")
+        exit(1)
+    }
+    exit(0)
+}
+
+// --key-chooser-test <out>: draws the "Show it with" menu from adding a gesture, as if Shaka.png was picked.
+if let idx = CommandLine.arguments.firstIndex(of: "--key-chooser-test") {
+    _ = NSApplication.shared
+    let out = CommandLine.arguments.count > idx + 1 ? CommandLine.arguments[idx + 1] : "/tmp/key-chooser.png"
+    let chooser = GestureKeyChooser(free: Gesture.keys)
+    chooser.follow(URL(fileURLWithPath: "/x/Shaka.png"))
+    let view = chooser.view
+    view.appearance = NSAppearance(named: .aqua)
+    view.wantsLayer = true
+    view.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+    view.layoutSubtreeIfNeeded()
+    let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+    if let rep = rep {
+        view.cacheDisplay(in: view.bounds, to: rep)
+    }
+    RenderTest.save(rep?.representation(using: .png, properties: [:]), to: out)
+    exit(0)
+}
+
+// --picker-test <out> [hovered id]: draws the hand picker from Settings, optionally with a hand hovered.
+if let idx = CommandLine.arguments.firstIndex(of: "--picker-test") {
+    _ = NSApplication.shared
+    let out = CommandLine.arguments.count > idx + 1 ? CommandLine.arguments[idx + 1] : "/tmp/picker.png"
+    let hovered = CommandLine.arguments.count > idx + 2 ? PointerStyle(rawValue: CommandLine.arguments[idx + 2]) : nil
+    let dark = ProcessInfo.processInfo.environment["TH_DARK"] != nil
+    RenderTest.save(snapshotPointerPicker(hovered: hovered, dark: dark)?.representation(using: .png, properties: [:]), to: out)
+    exit(0)
+}
+
+// --make-gesture <hand picture> <gesture source> <out>: puts a gesture on a hand's own stick,
+// the same way Settings does for your own hands. Name the result <hand>_<key>, such as hand_line_s.
+if let idx = CommandLine.arguments.firstIndex(of: "--make-gesture"), CommandLine.arguments.count > idx + 3 {
+    let hand = URL(fileURLWithPath: CommandLine.arguments[idx + 1])
+    let source = URL(fileURLWithPath: CommandLine.arguments[idx + 2])
+    let output = URL(fileURLWithPath: CommandLine.arguments[idx + 3])
+    guard let pointing = NSImage(contentsOf: hand)?.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+        print("failed: can't read \(hand.path)")
+        exit(1)
+    }
+    do {
+        try HandMaker.write(try HandMaker.makeGesture(from: source, matching: pointing), to: output)
+        print("ok")
     } catch let problem as HandMaker.Problem {
         print("rejected: \(problem.message)")
         exit(1)

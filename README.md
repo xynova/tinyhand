@@ -28,11 +28,13 @@ Open `TinyHand.dmg`, drag TinyHand to Applications and allow **Accessibility** w
 | Click | Tap (nothing underneath gets clicked) |
 | Hold and drag | Draw on the screen |
 | Hold **⌘** while drawing | Add an arrowhead to the end of the line |
+| Hold **⌃⇧** and a gesture's key | Show that gesture while held, on hands that have gestures. Line art has a middle finger (**M**), an OK (**O**) and a shaka (**S**). Settings › Pointers › Gestures adds gestures to your own hands, on the key you pick |
 | **⌃⌥X** | Clear the drawing |
 | **Esc** | Clear everything and turn the pointer off |
 
 While the pointer is on, a small toolbar at the bottom of the screen lets you pick one of
-36 hands or a laser dot, mute the tap sound, or exit.
+37 hands or a laser dot, mute the tap sound, or exit. A hand with gestures has a small number
+badge: hover over it to see its gestures and their shortcuts.
 
 ## Automation
 
@@ -57,6 +59,38 @@ selected style, whether sound is on, and every style with its `id`, name and typ
 records the app's `pid`, so a file left behind by a crash can be detected.
 
 If TinyHand isn't running, opening any link launches it and then runs the command.
+
+## Develop
+
+Run the tests (they work with Xcode or with only the Command Line Tools installed):
+
+```sh
+scripts/test.sh
+```
+
+To try a branch without touching your own TinyHand, quit TinyHand and install a preview:
+
+```sh
+scripts/preview.sh install     # builds "TinyHand Preview" into dist/ and opens it
+scripts/preview.sh uninstall   # removes it, its settings and its Accessibility permission
+```
+
+A hand's gestures are pictures named after the hand, then one letter or digit, which is the
+gesture's key: `hand_line_s.webp` is Line art's ⌃⇧S. Gestures have keys, not names: the picture
+shows what each one is. To make one from a picture of the gesture on a transparent background,
+sitting on the hand's own stick:
+
+```sh
+swift build && .build/debug/TinyHand --make-gesture assets/hand_line.webp shaka.png /tmp/hand_line_s.png
+cwebp -lossless /tmp/hand_line_s.png -o assets/hand_line_s.webp
+```
+
+Built-in pictures ship as WebP, and TinyHand looks for a WebP before a PNG of the same name,
+so a PNG beside an existing WebP never shows.
+
+The preview has its own name and settings, can't update itself, and leaves `tinyhand://`
+links to your own TinyHand. It backs up `~/Library/Application Support/TinyHand` when it
+installs and puts it back when it uninstalls.
 
 ## License
 

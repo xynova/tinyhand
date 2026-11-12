@@ -1,13 +1,35 @@
 import AppKit
 
 enum RenderTest {
+    /// Writes a render-test picture and says where, or says why not and exits 1, so a script
+    /// never trusts a "rendered" line for a file that wasn't written.
+    static func save(_ data: Data?, to path: String) {
+        guard let data = data else {
+            print("failed: nothing to render for \(path)")
+            exit(1)
+        }
+        do {
+            try data.write(to: URL(fileURLWithPath: path))
+            print("rendered \(path)")
+        } catch {
+            print("failed: \(error)")
+            exit(1)
+        }
+    }
+
     static func run(outPath: String) {
         _ = NSApplication.shared
 
         let panel = CGSize(width: 420, height: 560)
-        let styles = PointerStyle.allCases
+        // Every style pointing, then each style's gestures. TH_STYLE=<id> draws just that style.
+        var styles = PointerStyle.allCases
+        if let only = ProcessInfo.processInfo.environment["TH_STYLE"] {
+            styles = styles.filter { $0.rawValue == only }
+        }
+        let panels: [(style: PointerStyle, gesture: Gesture?)] =
+            styles.map { ($0, nil) } + styles.flatMap { s in s.gestures.map { (s, $0) } }
         let target = CGPoint(x: panel.width - 230, y: 380)
-        let w = Int(panel.width) * styles.count
+        let w = Int(panel.width) * panels.count
         let h = Int(panel.height)
 
         guard let ctx = CGContext(
@@ -18,7 +40,8 @@ enum RenderTest {
             exit(3)
         }
 
-        for (i, style) in styles.enumerated() {
+        for (i, item) in panels.enumerated() {
+            let style = item.style
             ctx.saveGState()
             ctx.translateBy(x: CGFloat(i) * panel.width, y: 0)
             ctx.setFillColor(CGColor(red: 0.93, green: 0.94, blue: 0.92, alpha: 1))
@@ -26,6 +49,7 @@ enum RenderTest {
 
             let view = ArmView(frame: NSRect(origin: .zero, size: panel))
             view.setStyle(style)
+            view.setGesture(item.gesture)
             let resting = ProcessInfo.processInfo.environment["TH_RESTING"] != nil
             if !resting {
                 view.press()

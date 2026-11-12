@@ -9,6 +9,23 @@ final class ArmView: NSView {
 
     private(set) var style: PointerStyle = .lavender
     private var asset: HandAsset?
+    // A gesture swaps only the picture: the hand keeps the pointing picture's aim, size and
+    // stick, so a tap still lands where the pointing fingertip would.
+    private(set) var gesture: Gesture?
+    private var gestureAsset: HandAsset?
+    // The hand's gesture pictures, loaded once per hand so a gesture key swaps them without
+    // reading or measuring a file.
+    private var gestureAssets: [Gesture: HandAsset] = [:]
+
+    // Which picture is on the layers (pointing, or a gesture) and at what height.
+    private struct ShownPicture: Hashable {
+        let gesture: Gesture?
+        let height: Int
+    }
+    private var shownPicture: ShownPicture?
+    // Resized pictures for this hand, so swapping gestures doesn't resize again; emptied when the
+    // hand or its gestures change.
+    private var resizedPictures: [ShownPicture: CGImage] = [:]
 
     private var handLenFrac: CGFloat = Preferences.pointerSize
     private var showShadow = Preferences.showShadow
@@ -27,7 +44,6 @@ final class ArmView: NSView {
     private var lastPose: [CGFloat] = []
     private var lastLaserPose: [CGFloat] = []
     private var gripTarget: CGFloat?
-    private var displayImageHeight = 0
 
     var isSettling: Bool {
         if pressAmount > 0.002 {
@@ -95,19 +111,60 @@ final class ArmView: NSView {
         if newStyle != .laser && asset == nil {
             style = .laser
         }
+        reloadGestures()
         updateInkColor()
+        let hidden = pointerHidden
+        pointerHidden = hidden
+    }
+
+    /// Loads the hand's gesture pictures again, after one of your own hands gained or lost one,
+    /// and goes back to pointing.
+    func reloadGestures() {
+        gestureAssets = [:]
+        for g in style.gestures {
+            if let a = HandAsset.load(g.assetName) {
+                gestureAssets[g] = a
+            } else {
+                Log.write("gesture \(g.shortcut) on \(style.rawValue) has a picture TinyHand can't load")
+            }
+        }
+        gesture = nil
+        gestureAsset = nil
+        shownPicture = nil
+        resizedPictures = [:]
+        lastPose = []
+        applyPicture()
+    }
+
+    /// Shows a gesture instead of pointing, or pointing again with nil.
+    /// A gesture that isn't one of this hand's, or whose picture won't load, keeps it pointing.
+    func setGesture(_ newGesture: Gesture?) {
+        let shown = newGesture.flatMap { gestureAssets[$0] }
+        let next = shown == nil ? nil : newGesture
+        guard next != gesture else {
+            return
+        }
+        gesture = next
+        gestureAsset = shown
+        lastPose = []
+        applyPicture()
+    }
+
+    // The top of the picture area shown: a gesture can reach higher than the pointing finger.
+    private func shownTop(_ a: HandAsset) -> CGFloat {
+        min(a.handTop, gestureAsset?.handTop ?? a.handTop)
+    }
+
+    private func applyPicture() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         if let a = asset, style != .laser {
             group.anchorPoint = CGPoint(x: a.rodX, y: 0)
-            displayImageHeight = 0
             updateDisplayImage(a)
             rodLayer.contentsRect = CGRect(x: 0, y: 1 - a.rodEnd, width: 1, height: a.rodEnd - a.wrist)
-            handLayer.contentsRect = CGRect(x: 0, y: 1 - a.wrist, width: 1, height: a.wrist - a.handTop)
+            handLayer.contentsRect = CGRect(x: 0, y: 1 - a.wrist, width: 1, height: a.wrist - shownTop(a))
         }
         CATransaction.commit()
-        let hidden = pointerHidden
-        pointerHidden = hidden
     }
 
     required init?(coder: NSCoder) {
@@ -164,7 +221,10 @@ final class ArmView: NSView {
             height: sx * sin(-rotation) + sy * cos(-rotation)
         )
 
-        let pose = [rotation, rodLen, handPts, widthPts, grip.x, lift, pressAmount, showShadow ? 1 : 0, a.aspect]
+        // The shown hand area grows upward when a gesture reaches above the pointing finger.
+        let shownHandPts = handPts * (a.wrist - shownTop(a)) / (a.wrist - a.handTop)
+
+        let pose = [rotation, rodLen, handPts, widthPts, grip.x, lift, pressAmount, showShadow ? 1 : 0, a.aspect, shownHandPts]
             .map { ($0 * 100).rounded() }
         guard pose != lastPose else {
             return
@@ -182,10 +242,10 @@ final class ArmView: NSView {
 
         rodLayer.bounds = CGRect(x: 0, y: 0, width: widthPts, height: rodLen)
         rodLayer.position = CGPoint(x: widthPts / 2, y: 0)
-        handLayer.bounds = CGRect(x: 0, y: 0, width: widthPts, height: handPts)
+        handLayer.bounds = CGRect(x: 0, y: 0, width: widthPts, height: shownHandPts)
         handLayer.position = CGPoint(x: widthPts / 2, y: rodLen)
 
-        group.bounds = CGRect(x: 0, y: 0, width: widthPts, height: rodLen + handPts)
+        group.bounds = CGRect(x: 0, y: 0, width: widthPts, height: rodLen + shownHandPts)
         group.position = grip
         group.transform = CATransform3DMakeRotation(rotation, 0, 0, 1)
 
@@ -217,17 +277,28 @@ final class ArmView: NSView {
     }
 
     private func updateDisplayImage(_ a: HandAsset) {
-        let full = a.image
+        let full = (gestureAsset ?? a).image
         let scale = window?.backingScaleFactor ?? 2
         let restPts = handLenFrac * bounds.height / (a.wrist - a.handTop)
         let step = 64
         let needed = (Int((restPts * scale).rounded(.up)) + step - 1) / step * step
         let height = needed >= full.height * 9 / 10 ? full.height : max(step, needed)
-        guard height != displayImageHeight else {
+        let wanted = ShownPicture(gesture: gesture, height: height)
+        guard wanted != shownPicture else {
             return
         }
-        displayImageHeight = height
-        let image = height == full.height ? full : HandAsset.resized(full, height: height) ?? full
+        shownPicture = wanted
+        let image: CGImage
+        if height == full.height {
+            image = full
+        } else if let hit = resizedPictures[wanted] {
+            image = hit
+        } else {
+            image = HandAsset.resized(full, height: height) ?? full
+            // Only the current height is worth keeping: resizing the pointer leaves the old ones unused.
+            resizedPictures = resizedPictures.filter { $0.key.height == height }
+            resizedPictures[wanted] = image
+        }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         rodLayer.contents = image

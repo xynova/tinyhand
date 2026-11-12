@@ -1,5 +1,91 @@
 import AppKit
 
+// A pose a hand can show instead of pointing, while ⌃⇧ and its key are held.
+// A hand's gestures come from its picture files: the hand's own picture name, then _<key>, where
+// the key is one letter or digit. hand_line_s.webp is Line art's ⌃⇧S, and custom-1a2b3c4d_2.png
+// is a custom hand's ⌃⇧2. Gestures have keys, not names: the picture shows what each one is.
+struct Gesture: Hashable {
+    /// Every key a gesture can use, in the order gestures are listed: digits, then letters.
+    static let keys: [Character] = Array("1234567890abcdefghijklmnopqrstuvwxyz")
+
+    /// Lower case, as in the file name.
+    let key: Character
+    let assetName: String
+
+    var shortcut: String { Gesture.shortcut(for: key) }
+
+    /// How a gesture key's shortcut is written, such as "⌃⇧S".
+    static func shortcut(for key: Character) -> String { "⌃⇧\(key.uppercased())" }
+
+    /// What people and screen readers call it, such as "Gesture S".
+    var label: String { "Gesture \(key.uppercased())" }
+
+    /// Where it comes in lists: digits first, then letters.
+    var order: Int { Gesture.keys.firstIndex(of: key) ?? Gesture.keys.count }
+
+    /// Reads a gesture from a picture name, given the hand's own picture name.
+    static func parse(_ fileBase: String, hand base: String) -> Gesture? {
+        guard fileBase.hasPrefix(base + "_") else {
+            return nil
+        }
+        let rest = fileBase.dropFirst(base.count + 1).lowercased()
+        guard rest.count == 1, let key = rest.first, keys.contains(key) else {
+            return nil
+        }
+        return Gesture(key: key, assetName: fileBase)
+    }
+}
+
+// Finds each hand's gestures among its picture files, and remembers them until told to forget.
+enum GestureCatalog {
+    // Behind a lock rather than a bare static var: Swift 6 rejects unguarded shared mutable
+    // state, and the lock keeps it safe if a caller is ever off the main thread.
+    private final class Store: @unchecked Sendable {
+        let lock = NSLock()
+        var known: [String: [Gesture]] = [:]
+    }
+    private static let store = Store()
+
+    static func gestures(for style: PointerStyle) -> [Gesture] {
+        guard let base = style.assetName else {
+            return []
+        }
+        store.lock.lock()
+        let hit = store.known[base]
+        store.lock.unlock()
+        if let hit = hit {
+            return hit
+        }
+        // A key's picture can be in more than one folder, or be both a WebP and a PNG; it is
+        // the same gesture, and HandAsset picks which file to load.
+        let types = HandAsset.pictureTypes(custom: style.isCustom)
+        var byKey: [Character: Gesture] = [:]
+        for folder in HandAsset.pictureFolders(custom: style.isCustom) {
+            for file in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] {
+                let url = URL(fileURLWithPath: file)
+                guard types.contains(url.pathExtension.lowercased()),
+                      let gesture = Gesture.parse(url.deletingPathExtension().lastPathComponent, hand: base) else {
+                    continue
+                }
+                byKey[gesture.key] = gesture
+            }
+        }
+        let list = byKey.values.sorted { $0.order < $1.order }
+        store.lock.lock()
+        store.known[base] = list
+        store.lock.unlock()
+        return list
+    }
+
+    static func forget(_ style: PointerStyle) {
+        if let base = style.assetName {
+            store.lock.lock()
+            store.known[base] = nil
+            store.lock.unlock()
+        }
+    }
+}
+
 struct PointerStyle: Hashable {
     let rawValue: String
 
@@ -58,7 +144,17 @@ struct PointerStyle: Hashable {
         ("neon", "Neon", Ink.hex(0xE0309A)),
         ("leaf", "Leaf", Ink.hex(0x3E9E2E)),
         ("cookie", "Gingerbread", Ink.hex(0x9A5E2C)),
+        ("line", "Line art", Ink.hex(0x1D1D21)),
     ]
+
+    /// This hand's gestures, digits then letters.
+    var gestures: [Gesture] {
+        GestureCatalog.gestures(for: self)
+    }
+
+    func gesture(key: Character) -> Gesture? {
+        gestures.first { $0.key == key }
+    }
 
     static var builtInHands: [PointerStyle] {
         builtIn.map { PointerStyle($0.id) }
@@ -218,8 +314,9 @@ struct HandAsset {
         let side = max(handW, handH) * 1.06
         let cx = (handMinX + handMaxX) / 2 * w
         let cy = (handTop + wrist) / 2 * h
-        let rect = CGRect(x: cx - side / 2, y: cy - side / 2, width: side, height: side)
-            .intersection(CGRect(x: 0, y: 0, width: w, height: h))
+        let square = CGRect(x: cx - side / 2, y: cy - side / 2, width: side, height: side)
+        // A hand near the picture's edge cuts the square short; that part stays transparent.
+        let rect = square.intersection(CGRect(x: 0, y: 0, width: w, height: h))
         let cropped = image.cropping(to: rect) ?? image
         let px = 128
         guard let ctx = CGContext(data: nil, width: px, height: px, bitsPerComponent: 8, bytesPerRow: 0,
@@ -228,7 +325,12 @@ struct HandAsset {
             return NSImage(cgImage: cropped, size: NSSize(width: 64, height: 64))
         }
         ctx.interpolationQuality = .high
-        ctx.draw(cropped, in: CGRect(x: 0, y: 0, width: px, height: px))
+        // Where the cut part sits in the square. Pictures count rows from the top, the context
+        // from the bottom.
+        let scale = CGFloat(px) / side
+        ctx.draw(cropped, in: CGRect(x: (rect.minX - square.minX) * scale,
+                                     y: (square.maxY - rect.maxY) * scale,
+                                     width: rect.width * scale, height: rect.height * scale))
         guard let small = ctx.makeImage() else {
             return NSImage(cgImage: cropped, size: NSSize(width: 64, height: 64))
         }
@@ -247,6 +349,24 @@ struct HandAsset {
         ctx.interpolationQuality = .high
         ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
         return ctx.makeImage()
+    }
+
+    /// The hand's top row and its wrist row, from each row's count of solid pixels: the wrist is
+    /// the first row, past the fist, much narrower than the hand's widest row. HandMaker uses the
+    /// same rule to place a gesture's cuff, so it sits where ArmView splits the hand from its stick.
+    static func wristRow(counts: [Int]) -> (top: Int, wrist: Int)? {
+        let h = counts.count
+        guard let top = counts.firstIndex(where: { $0 > 0 }) else {
+            return nil
+        }
+        let searchEnd = min(h, top + Int(0.45 * Double(h)))
+        let maxW = counts[top..<searchEnd].max() ?? 0
+        guard maxW > 0,
+              let fist = (top..<h).first(where: { Double(counts[$0]) > 0.6 * Double(maxW) }),
+              let wrist = (fist..<h).first(where: { Double(counts[$0]) < 0.35 * Double(maxW) }) else {
+            return nil
+        }
+        return (top, wrist)
     }
 
     private static func measure(_ image: CGImage) -> HandAsset? {
@@ -281,16 +401,11 @@ struct HandAsset {
         }
 
         let counts = (0..<h).map(count)
-        guard let top = counts.firstIndex(where: { $0 > 0 }) else {
+        guard let found = wristRow(counts: counts) else {
             return nil
         }
-        let searchEnd = min(h, top + Int(0.45 * Double(h)))
-        let maxW = counts[top..<searchEnd].max() ?? 0
-        guard maxW > 0,
-              let fist = (top..<h).first(where: { Double(counts[$0]) > 0.6 * Double(maxW) }),
-              let wrist = (fist..<h).first(where: { Double(counts[$0]) < 0.35 * Double(maxW) }) else {
-            return nil
-        }
+        let top = found.top
+        let wrist = found.wrist
         let rodW = counts[min(h - 1, wrist + h / 50)]
         let lastRow = counts.lastIndex(where: { $0 > 0 }) ?? (h - 1)
         let from = min(h - 1, wrist + h / 33)
@@ -322,16 +437,31 @@ struct HandAsset {
         )
     }
 
-    private static func loadImage(_ name: String) -> CGImage? {
-        let exeDir = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
-        var urls: [URL] = []
-        urls.append(CustomHands.directory.appendingPathComponent("\(name).png"))
-        if let u = Bundle.main.url(forResource: name, withExtension: "png") {
-            urls.append(u)
+    /// Built-in hand pictures are WebP or PNG; each folder is checked for WebP first. Your own
+    /// hands and their gestures are always PNG, the only type TinyHand writes, loads and deletes there.
+    static func pictureTypes(custom: Bool) -> [String] {
+        custom ? ["png"] : ["webp", "png"]
+    }
+
+    /// Where hand pictures live, in the order they are looked for. Your own hands live in their
+    /// own folder; built-in hands in the app bundle, beside the program, or in assets/ when run
+    /// from the source tree. Gesture pictures are found in the same places.
+    static func pictureFolders(custom: Bool) -> [URL] {
+        if custom {
+            return [CustomHands.directory]
         }
-        urls.append(exeDir.appendingPathComponent("\(name).png"))
-        urls.append(exeDir.appendingPathComponent("assets/\(name).png"))
-        urls.append(URL(fileURLWithPath: "assets/\(name).png"))
+        let exeDir = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
+        return [Bundle.main.resourceURL, exeDir, exeDir.appendingPathComponent("assets"),
+                URL(fileURLWithPath: "assets")].compactMap { $0 }
+    }
+
+    private static func loadImage(_ name: String) -> CGImage? {
+        var urls = [CustomHands.directory.appendingPathComponent("\(name).png")]
+        for folder in pictureFolders(custom: false) {
+            for type in pictureTypes(custom: false) {
+                urls.append(folder.appendingPathComponent("\(name).\(type)"))
+            }
+        }
         for url in urls where FileManager.default.fileExists(atPath: url.path) {
             if let image = NSImage(contentsOf: url),
                let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {

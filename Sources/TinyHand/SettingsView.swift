@@ -55,6 +55,7 @@ final class SettingsModel: ObservableObject {
     private var observer: Any?
     private var handsObserver: Any?
     @Published var handMessage: String?
+    @Published var gestureMessage: String?
 
     init() {
         observer = NotificationCenter.default.addObserver(forName: Preferences.changed, object: nil, queue: .main) { [weak self] _ in
@@ -159,6 +160,48 @@ final class SettingsModel: ObservableObject {
         } catch {
             draftError = "TinyHand couldn't save that hand."
         }
+    }
+
+    func chooseGestureFile(for hand: PointerStyle) {
+        let free = CustomHands.freeKeys(for: hand)
+        guard !free.isEmpty else {
+            gestureMessage = CustomHands.noFreeKeyMessage(hand)
+            revision += 1
+            return
+        }
+        let chooser = GestureKeyChooser(free: free)
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.png, .webP, .image]
+        panel.allowsMultipleSelection = false
+        panel.message = "Pick a picture of a gesture for \(hand.title), on a transparent background"
+        panel.accessoryView = chooser.view
+        panel.isAccessoryViewDisclosed = true
+        panel.delegate = chooser
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+        do {
+            let gesture = try CustomHands.addGesture(to: hand, from: url, key: chooser.selectedKey)
+            gestureMessage = "Added to \(hand.title). Hold \(gesture.shortcut) to show it."
+        } catch let problem as HandMaker.Problem {
+            gestureMessage = problem.message
+        } catch {
+            Log.write("couldn't add gesture to \(hand.rawValue): \(error.localizedDescription)")
+            gestureMessage = "TinyHand couldn't add that gesture."
+        }
+        revision += 1
+    }
+
+    func removeGesture(_ gesture: Gesture, from hand: PointerStyle) {
+        do {
+            try CustomHands.removeGesture(gesture, from: hand)
+            gestureMessage = nil
+        } catch let problem as HandMaker.Problem {
+            gestureMessage = problem.message
+        } catch {
+            gestureMessage = "TinyHand couldn't remove \(gesture.label.lowercased())."
+        }
+        revision += 1
     }
 
     func removeHand(_ style: PointerStyle) {
@@ -616,6 +659,7 @@ private struct PointersPage: View {
                         .toggleStyle(.switch).labelsHidden().focusable(false)
                 }
             }
+            GesturesCard(model: model)
             YourHands(model: model)
         }
         .coordinateSpace(name: "pointersPage")
@@ -659,24 +703,67 @@ private struct AddSlot: View {
     }
 }
 
+// The small count badge on a hand that has gestures.
+private struct GestureBadge: View {
+    let style: PointerStyle
+
+    var body: some View {
+        if let count = GestureHelp.badge(for: style) {
+            Text(count)
+                .font(.system(size: GestureHelp.badgeFontSize, weight: .bold))
+                .foregroundColor(.white)
+                .frame(width: GestureHelp.badgeSize, height: GestureHelp.badgeSize)
+                .background(Circle().fill(Color(nsColor: GestureHelp.badgeColor)))
+                .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: GestureHelp.badgeBorder))
+                .accessibilityHidden(true)
+        }
+    }
+}
+
 private struct PointerPicker: View {
     @ObservedObject var model: SettingsModel
     let done: () -> Void
+    @State private var hovered: PointerStyle?
     private let columns = [GridItem(.adaptive(minimum: 64, maximum: 72), spacing: 4)]
+
+    init(model: SettingsModel, hovered: PointerStyle? = nil, done: @escaping () -> Void) {
+        self.model = model
+        self.done = done
+        _hovered = State(initialValue: hovered)
+    }
 
     var body: some View {
         let pinned = Set(Preferences.pinnedStyles)
         VStack(alignment: .leading, spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    section(nil, PointerStyle.builtInHands + [.laser], pinned)
-                    if !PointerStyle.customHands.isEmpty {
-                        section("Your hands", PointerStyle.customHands, pinned)
+            ScrollViewReader { scroller in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        section(nil, PointerStyle.builtInHands + [.laser], pinned)
+                        if !PointerStyle.customHands.isEmpty {
+                            section("Your hands", PointerStyle.customHands, pinned)
+                        }
+                    }
+                    .padding(12)
+                }
+                // Only the render test opens the picker with a hand already hovered.
+                .onAppear {
+                    if let hand = hovered {
+                        scroller.scrollTo(hand, anchor: .center)
                     }
                 }
-                .padding(12)
             }
             .frame(height: 340)
+            // Hovering a hand with gestures shows them in a card over the grid. The card floats,
+            // so the picker keeps its size and nothing moves under the mouse.
+            .overlayPreferenceValue(PickerCellBounds.self) { cells in
+                GeometryReader { proxy in
+                    if let hand = hovered, GesturePreviewCard.shows(for: hand), let cell = cells[hand] {
+                        GesturePreviewCard(style: hand)
+                            .position(GesturePreviewCard.center(for: hand, cell: proxy[cell], in: proxy.size))
+                    }
+                }
+                .allowsHitTesting(false)
+            }
             Divider()
             Button {
                 done()
@@ -705,13 +792,20 @@ private struct PointerPicker: View {
             }
             LazyVGrid(columns: columns, spacing: 4) {
                 ForEach(styles, id: \.self) { style in
-                    PickerCell(style: style, added: pinned.contains(style)) {
+                    PickerCell(style: style, added: pinned.contains(style), onHover: { inside in
+                        if inside {
+                            hovered = style
+                        } else if hovered == style {
+                            hovered = nil
+                        }
+                    }) {
                         guard !pinned.contains(style) else {
                             return
                         }
                         model.pin(style)
                         done()
                     }
+                    .id(style)
                 }
             }
         }
@@ -721,17 +815,21 @@ private struct PointerPicker: View {
 private struct PickerCell: View {
     let style: PointerStyle
     let added: Bool
+    let onHover: (Bool) -> Void
     let action: () -> Void
     @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            Group {
-                if let icon = pointerIcon(style) {
-                    Image(nsImage: icon).resizable().interpolation(.high).frame(width: 42, height: 42)
+            ZStack(alignment: .topTrailing) {
+                Group {
+                    if let icon = pointerIcon(style) {
+                        Image(nsImage: icon).resizable().interpolation(.high).frame(width: 42, height: 42)
+                    }
                 }
+                .frame(width: 62, height: 58)
+                GestureBadge(style: style).offset(x: -4, y: 4)
             }
-            .frame(width: 62, height: 58)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(Color.primary.opacity(hovering && !added ? 0.08 : 0))
@@ -742,7 +840,182 @@ private struct PickerCell: View {
         .buttonStyle(.plain)
         .focusable(false)
         .help(added ? "\(style.title) is already in the toolbar" : style.title)
+        .accessibilityLabel(GestureHelp.summary(for: style))
+        .anchorPreference(key: PickerCellBounds.self, value: .bounds) { [style: $0] }
+        .onHover {
+            hovering = $0
+            onHover($0)
+        }
+    }
+}
+
+// Where each hand's cell is in the picker, so the gesture preview can sit next to the hovered one.
+private struct PickerCellBounds: PreferenceKey {
+    static let defaultValue: [PointerStyle: Anchor<CGRect>] = [:]
+
+    static func reduce(value: inout [PointerStyle: Anchor<CGRect>], nextValue: () -> [PointerStyle: Anchor<CGRect>]) {
+        value.merge(nextValue()) { $1 }
+    }
+}
+
+// The card the hand picker shows over a hovered hand that has gestures: each one's picture and
+// shortcut. It has a fixed size so it can be placed before it is drawn.
+struct GesturePreviewCard: View {
+    let style: PointerStyle
+
+    /// Only hands with gestures get a card.
+    static func shows(for style: PointerStyle) -> Bool {
+        !style.gestures.isEmpty
+    }
+
+    private static let tile: CGFloat = 52
+    private static let spacing: CGFloat = 8
+    private static let height: CGFloat = 100
+
+    static func width(for style: PointerStyle) -> CGFloat {
+        let count = CGFloat(style.gestures.count)
+        return max(160, count * tile + (count - 1) * spacing + 28)
+    }
+
+    /// Above the hovered cell, or below it when there's no room above, kept inside the picker.
+    static func center(for style: PointerStyle, cell: CGRect, in size: CGSize) -> CGPoint {
+        let w = width(for: style), h = height
+        let x = min(max(cell.midX, w / 2 + 6), size.width - w / 2 - 6)
+        var y = cell.minY - h / 2 - 4
+        if y - h / 2 < 4 {
+            y = cell.maxY + h / 2 + 4
+        }
+        y = min(max(y, h / 2 + 4), size.height - h / 2 - 4)
+        return CGPoint(x: x, y: y)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("\(style.title) gestures").font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
+            HStack(spacing: Self.spacing) {
+                ForEach(style.gestures, id: \.self) { gesture in
+                    VStack(spacing: 3) {
+                        if let icon = HandAsset.thumbnail(gesture.assetName) {
+                            Image(nsImage: icon).resizable().interpolation(.high).frame(width: 40, height: 40)
+                        }
+                        Text(gesture.shortcut)
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(width: Self.tile)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(width: Self.width(for: style), height: Self.height, alignment: .topLeading)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color(nsColor: .windowBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.1)))
+        .shadow(color: .black.opacity(0.2), radius: 10, y: 4)
+        .accessibilityHidden(true)
+    }
+}
+
+// Your own hands, each with its gestures (picture and shortcut) and a button to add more.
+// Stock hands' gestures are found from their badge and hover preview instead.
+private struct GesturesCard: View {
+    @ObservedObject var model: SettingsModel
+
+    var body: some View {
+        let custom = PointerStyle.customHands
+        VStack(alignment: .leading, spacing: 6) {
+            Card(title: "Gestures") {
+                if custom.isEmpty {
+                    Text("Your own hands can have gestures. Make a hand below, then add its gestures here.")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                } else {
+                    ForEach(custom, id: \.self) { hand in
+                        GestureHandRow(hand: hand, model: model)
+                    }
+                }
+            }
+            Text("Hold ⌃⇧ and a gesture's key while the pointer is on. Let go to point again. "
+                 + "Stock hands with gestures have a badge in the toolbar: hover over it to see them.")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 4)
+            if let message = model.gestureMessage {
+                Text(message).font(.system(size: 11)).foregroundColor(.secondary).padding(.horizontal, 4)
+            }
+        }
+    }
+}
+
+private struct GestureHandRow: View {
+    let hand: PointerStyle
+    @ObservedObject var model: SettingsModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(hand.title).font(.system(size: 13))
+                Spacer()
+                TextButton(title: "Add gesture…") { model.chooseGestureFile(for: hand) }
+            }
+            if hand.gestures.isEmpty {
+                Text("No gestures yet.").font(.system(size: 11)).foregroundColor(.secondary)
+            } else {
+                HStack(spacing: 8) {
+                    ForEach(hand.gestures, id: \.self) { gesture in
+                        GestureTile(gesture: gesture) {
+                            model.removeGesture(gesture, from: hand)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+}
+
+private struct GestureTile: View {
+    let gesture: Gesture
+    let remove: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        VStack(spacing: 4) {
+            ZStack(alignment: .topTrailing) {
+                Group {
+                    if let icon = HandAsset.thumbnail(gesture.assetName) {
+                        Image(nsImage: icon).resizable().interpolation(.high)
+                    } else {
+                        Color.clear
+                    }
+                }
+                .frame(width: 44, height: 44)
+                if hovering {
+                    Button(action: remove) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(.secondary)
+                            .frame(width: 16, height: 16)
+                            .background(Circle().fill(Color(nsColor: .windowBackgroundColor)))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Remove \(gesture.label.lowercased())")
+                }
+            }
+            Text(gesture.shortcut)
+                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Color.primary.opacity(0.08)))
+        }
+        .frame(width: 60)
         .onHover { hovering = $0 }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(gesture.label), \(gesture.shortcut)")
     }
 }
 
@@ -916,6 +1189,9 @@ private struct ToolbarSlot: View {
                     .shadow(color: .black.opacity(lifted ? 0.22 : 0.08), radius: lifted ? 10 : 2, y: lifted ? 4 : 1)
             )
             .scaleEffect(lifted ? 1.06 : 1)
+            if !(hovering && model.dragging == nil) {
+                GestureBadge(style: style).offset(x: -4, y: 4)
+            }
             if hovering && model.dragging == nil {
                 Button {
                     model.unpin(style)
@@ -934,7 +1210,8 @@ private struct ToolbarSlot: View {
         }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .help(style.title)
+        .help(GestureHelp.summary(for: style))
+        .accessibilityLabel(GestureHelp.summary(for: style))
     }
 }
 
@@ -1556,6 +1833,89 @@ struct VisualEffect: NSViewRepresentable {
 }
 
 private let blankIcon = NSImage(size: NSSize(width: 64, height: 64))
+
+// The "Show it with" menu under the file picker when adding a gesture: the keys the hand has
+// free. It follows the picked file's name (Shaka.png picks ⌃⇧S) until someone changes it.
+final class GestureKeyChooser: NSObject, NSOpenSavePanelDelegate {
+    let view: NSView
+    private let keys: [Character]
+    private let menu: NSPopUpButton
+    private var changedByHand = false
+
+    init(free keys: [Character]) {
+        self.keys = keys
+        menu = NSPopUpButton(frame: .zero, pullsDown: false)
+        menu.addItems(withTitles: keys.map(Gesture.shortcut(for:)))
+        let label = NSTextField(labelWithString: "Show it with")
+        let row = NSStackView(views: [label, menu])
+        row.orientation = .horizontal
+        row.spacing = 8
+        row.edgeInsets = NSEdgeInsets(top: 10, left: 20, bottom: 10, right: 20)
+        row.frame = CGRect(origin: .zero, size: row.fittingSize)
+        view = row
+        super.init()
+        menu.target = self
+        menu.action = #selector(menuChanged)
+    }
+
+    /// The menu's choices, such as ["⌃⇧2", "⌃⇧S"].
+    var titles: [String] { menu.itemTitles }
+
+    var selectedKey: Character? {
+        keys.indices.contains(menu.indexOfSelectedItem) ? keys[menu.indexOfSelectedItem] : nil
+    }
+
+    func select(key: Character) {
+        if let index = keys.firstIndex(of: key) {
+            menu.selectItem(at: index)
+        }
+    }
+
+    /// Picks the key the file's name suggests, unless someone already chose one.
+    func follow(_ url: URL?) {
+        guard !changedByHand, let url = url, let key = CustomHands.suggestedKey(for: url, free: keys) else {
+            return
+        }
+        select(key: key)
+    }
+
+    @objc private func menuChanged() {
+        changedByHand = true
+    }
+
+    func panelSelectionDidChange(_ sender: Any?) {
+        follow((sender as? NSOpenPanel)?.url)
+    }
+}
+
+// MARK: - Test and render-test hooks
+
+/// Draws the hand picker on its own, optionally with a hand hovered.
+/// Called by `--picker-test` and by GestureHelpTests.
+func snapshotPointerPicker(hovered: PointerStyle? = nil, dark: Bool = false) -> NSBitmapImageRep? {
+    let names = PointerStyle.allCases.compactMap(\.assetName)
+    for name in names {
+        _ = HandAsset.thumbnail(name)
+    }
+    let view = NSHostingView(rootView: PointerPicker(model: SettingsModel(), hovered: hovered) {}
+        .background(Color(nsColor: .windowBackgroundColor)))
+    view.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+    view.frame = CGRect(origin: .zero, size: view.fittingSize)
+    // In an offscreen window, with a moment on the run loop, so a hovered hand is scrolled into
+    // view and its preview placed before the picture is taken.
+    let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+    window.contentView = view
+    view.layoutSubtreeIfNeeded()
+    if hovered != nil {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        view.layoutSubtreeIfNeeded()
+    }
+    guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+        return nil
+    }
+    view.cacheDisplay(in: view.bounds, to: rep)
+    return rep
+}
 
 private func pointerIcon(_ style: PointerStyle) -> NSImage? {
     guard let name = style.assetName else {
